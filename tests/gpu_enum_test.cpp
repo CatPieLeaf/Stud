@@ -1,5 +1,4 @@
-// Real GPU enumeration (ui/src/gpu_enum.h) against this machine's Vulkan driver.
-// Skipped on a machine with none.
+// GPU enumeration against this machine's Vulkan driver; skipped without one.
 
 #include "gpu_enum.h"
 #include "check.h"
@@ -11,7 +10,6 @@
 int main() {
     auto gpus = stud::ui::enumerate_gpus();
 
-    // Reaching this line with an empty list is the no-driver path working.
     if (gpus.empty()) {
         std::printf("no Vulkan device on this machine\n");
         return kSkipped;
@@ -22,12 +20,8 @@ int main() {
         std::printf("  found GPU %u: %s\n", gpu.device_index, gpu.name.c_str());
     }
 
-    // device_index is a position in vkEnumeratePhysicalDevices()'s own
-    // result order (the settings schema's real, stable identifier; see
-    // stud-config/settings.h), so the values rise but are NOT required to
-    // be 0..N-1: a loader that offers the same device twice, which a
-    // Flatpak's runtime really does, through two ICD directories, has
-    // its duplicates dropped, and the survivors keep their raw indices.
+    // Raw enumeration indices: rising but with gaps where duplicates (Flatpak's
+    // second ICD directory) were dropped.
     for (size_t i = 0; i < gpus.size(); ++i) {
         check(gpus[i].device_index >= static_cast<uint32_t>(i),
               "device_index is a raw vkEnumeratePhysicalDevices() position");
@@ -37,8 +31,7 @@ int main() {
         }
     }
 
-    // And no real GPU is listed twice. Only the UUID can say so: a duplicate
-    // from a second ICD directory has an index of its own.
+    // No GPU twice, by UUID.
     for (size_t i = 0; i < gpus.size(); ++i) {
         for (size_t j = i + 1; j < gpus.size(); ++j) {
             check(gpus[i].uuid.empty() || gpus[i].uuid != gpus[j].uuid,
@@ -46,7 +39,7 @@ int main() {
         }
     }
 
-    // The saved choice: the UUID decides, and the index stands in without one.
+    // The UUID decides; the index stands in without one.
     using stud::config::GpuSelection;
     using stud::ui::chosen_gpu_index;
     const auto& last = gpus.back();

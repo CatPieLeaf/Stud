@@ -16,8 +16,7 @@ namespace {
 int failures = 0;
 
 void expect_only(const QIcon& icon, QIcon::Mode mode, QColor colour, const char* what) {
-    // Premultiplied, as Qt draws it: each channel of a pixel is the colour
-    // times its alpha, so a soft edge is checked as exactly as a solid one.
+    // Premultiplied, so soft edges are checked exactly too.
     const QImage image = icon.pixmap(QSize(32, 32), mode).toImage().convertToFormat(
         QImage::Format_ARGB32_Premultiplied);
     int visible = 0;

@@ -8,10 +8,8 @@ namespace stud::ui::stud1 {
 
 namespace {
 
-// Every entry Stud 1.x wrote under its data and cache directories
-// (android-glue/include/stud/stud_paths.h and its users on 1.x's main), and
-// none Stud 2.0 writes there. 2.0's own are client/, prefix/, studio/,
-// icons/, webview/ and history.json in data, and webview/ in cache.
+// Everything Stud 1.x wrote under the data and cache dirs, none of 2.0's (client/,
+// prefix/, studio/, icons/, webview/, history.json; webview/ in cache).
 constexpr const char* kData[] = {
     "apk",           // the imported Roblox APK
     "files",         // the Android engine's files directory

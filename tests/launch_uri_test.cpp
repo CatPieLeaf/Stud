@@ -1,9 +1,4 @@
-// roblox-player: and roblox: launch link parsing
-// (ui/src/launch_uri.h). Format and field casing verified live this
-// session against multiple real Play-button clicks (both a direct
-// browser default-handler launch and Firefox's portal-activated
-// "choose installed app" flow). These are real key names, and the
-// synthetic values below match the real shape confirmed live.
+// roblox-player: and roblox: link parsing (ui/src/launch_uri.h), with real key names.
 
 #include "launch_uri.h"
 #include "check.h"
@@ -12,15 +7,12 @@
 #include <cstdlib>
 
 int main() {
-    // A normal, non-launch argument (e.g. no CLI args at all, or some
-    // unrelated string), correctly recognized as "not a launch URI".
     check(!stud::ui::parse_launch_uri("").has_value(), "an empty string is not a launch URI");
     check(!stud::ui::parse_launch_uri("/usr/bin/stud-ui").has_value(),
           "a plain file path is not mistaken for a launch URI");
     check(!stud::ui::parse_launch_uri("https://www.roblox.com/games/123").has_value(),
           "an ordinary https URL is not mistaken for a launch URI");
 
-    // Well-known format.
     std::string uri =
         "roblox-player://1"
         "+launchmode:play"
@@ -54,34 +46,24 @@ int main() {
     check(parsed->join_attempt_origin == "PlayButton",
           "joinAttemptOrigin is parsed out of place_launcher_url's own query string");
 
-    // No placelauncherurl at all (e.g. a bare, non-game launch), the
-    // deep-link-derived fields stay at their honest zero/empty defaults
-    // rather than erroring.
+    // Without placelauncherurl the join fields stay zero or empty.
     auto parsed_bare = stud::ui::parse_launch_uri("roblox-player://1+launchmode:app");
     check(parsed_bare.has_value() && parsed_bare->place_id == 0 &&
               parsed_bare->join_attempt_id.empty() && parsed_bare->referred_by_player_id == 0 &&
               parsed_bare->join_attempt_origin.empty(),
           "deep-link fields default to zero/empty when there's no placelauncherurl at all");
 
-    // The "roblox:" scheme (also confirmed real, distinct from
-    // "roblox-player:") is accepted too.
     auto parsed_alt = stud::ui::parse_launch_uri("roblox://1+launchmode:app");
     check(parsed_alt.has_value(), "the roblox: scheme (not just roblox-player:) is recognized");
     check(parsed_alt->launch_mode == "app", "roblox: scheme payload parses correctly too");
 
-    // A URI without the "//" prefix still parses, tolerant of format
-    // variation given the real format isn't independently re-verified
-    // here.
+    // The "//" prefix is optional.
     auto parsed_no_slashes = stud::ui::parse_launch_uri("roblox-player:1+launchmode:play+gameinfo:XYZ");
     check(parsed_no_slashes.has_value() && parsed_no_slashes->launch_mode == "play" &&
               parsed_no_slashes->game_info == "XYZ",
           "a URI missing the // prefix still parses correctly");
 
-    // The format the website actually sends, verbatim from a Chrome
-    // report: an ordinary URL with an ordinary query string, nothing
-    // "+"-separated anywhere in it. Reading this as the other format
-    // left place_id at 0, which made Stud treat a browser click as a
-    // bare launch and open the home screen.
+    // The website's own format: a plain URL with a query string.
     auto parsed_web = stud::ui::parse_launch_uri(
         "roblox://experiences/start?placeId=10518166490"
         "&gameInstanceId=37ecc77f-db64-47e9-8c14-d3d1dcb71e3"
@@ -97,25 +79,21 @@ int main() {
     check(parsed_web->referred_by_player_id == 0, "referredByPlayerId is read");
     check(parsed_web->launch_mode == "play", "a link naming a place is a request to play it");
 
-    // A place link with no server named is still a join, of any server
-    // for that place, which is what the site sends from an experience
-    // page.
+    // A place link with no server joins any server of the place.
     auto parsed_place_only =
         stud::ui::parse_launch_uri("roblox://experiences/start?placeId=606849621");
     check(parsed_place_only.has_value() && parsed_place_only->place_id == 606849621LL &&
               parsed_place_only->game_instance_id.empty(),
           "a place-only link parses, with no server named");
 
-    // Neither format may be read as the other: the launcher protocol's
-    // own links still parse exactly as before.
+    // Launcher protocol links still parse as before.
     auto parsed_legacy_still =
         stud::ui::parse_launch_uri("roblox-player://1+launchmode:play+gameinfo:TICKET");
     check(parsed_legacy_still.has_value() && parsed_legacy_still->launch_mode == "play" &&
               parsed_legacy_still->game_info == "TICKET" && parsed_legacy_still->place_id == 0,
           "the launcher protocol's own format still parses");
 
-    // A private server's share link, and a follow link, which names a
-    // user and no place.
+    // A private server's share link, and a follow link, which names a user.
     auto parsed_private = stud::ui::parse_launch_uri(
         "roblox://experiences/start?placeId=606849621&linkCode=12345678901234567890");
     check(parsed_private.has_value() && parsed_private->place_id == 606849621LL &&

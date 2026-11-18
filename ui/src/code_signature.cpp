@@ -35,14 +35,12 @@ constexpr uint32_t kSlotResources = 3;
 constexpr uint32_t kSlotEntitlements = 5;
 constexpr uint32_t kSlotDerEntitlements = 7;
 constexpr uint32_t kSlotSignature = 0x10000;
-// Apple's markers: the Developer ID intermediate authority, and a Developer ID
-// Application certificate.
+// Developer ID intermediate CA and Developer ID Application certificate OIDs.
 constexpr const char* kDeveloperIdCa = "1.2.840.113635.100.6.2.6";
 constexpr const char* kDeveloperIdApp = "1.2.840.113635.100.6.1.13";
-// The FastFlags file Stud writes for the client (client::write_app_settings),
-// relative to the bundle's Contents.
+// Relative to Contents; written by client::write_app_settings.
 constexpr const char* kSettingsFile = "MacOS/ClientSettings/ClientAppSettings.json";
-// Nested bundles inside nested bundles, at most: Roblox ships two levels.
+// Roblox ships two levels of nested bundles.
 constexpr int kMaxDepth = 4;
 
 uint32_t be32(const QByteArray& b, qsizetype at) {
@@ -62,18 +60,16 @@ std::optional<QByteArray> sha256_of_file(const QString& path) {
     return hash.result();
 }
 
-// One executable's signature, read from its x86_64 code.
 struct Code {
     QByteArray directory;                // the SHA-256 code directory
     std::map<uint32_t, QByteArray> blobs;  // the superblob's other blobs, by slot
     QString identifier;
     QString team;
-    // The code-directory hash of every architecture in the file, this one's
-    // included: a seal pins a universal binary by whichever it recorded.
+    // Every architecture's cdhash: a seal pins a universal binary by whichever it recorded.
     QList<QByteArray> cdhashes;
 
     QByteArray cdhash() const { return sha256(directory).left(20); }
-    // A special slot's hash; empty when the slot holds nothing.
+    // Empty when the slot holds nothing.
     QByteArray special(uint32_t slot) const {
         const uint32_t hash_offset = be32(directory, 16);
         const uint32_t count = be32(directory, 24);
@@ -83,7 +79,6 @@ struct Code {
     }
 };
 
-// The architectures of a Mach-O file, thin or universal, each with its code.
 std::optional<QList<std::pair<uint32_t, QByteArray>>> slices(const QByteArray& bytes, QString* error) {
     if (bytes.size() < 32) {
         *error = QStringLiteral("not an executable");
@@ -113,8 +108,7 @@ std::optional<QList<std::pair<uint32_t, QByteArray>>> slices(const QByteArray& b
     return found;
 }
 
-// The SHA-256 code directory hash of a slice not run here, read without
-// checking its pages; empty when it has none.
+// The cdhash of a slice not run here, without checking its pages; empty when unsigned.
 QByteArray other_cdhash(const QByteArray& slice) {
     const uint32_t ncmds = slice.size() >= 32 ? le32(slice, 16) : 0;
     qsizetype at = 32;
@@ -140,8 +134,7 @@ QByteArray other_cdhash(const QByteArray& slice) {
     return {};
 }
 
-// Read `slice`'s signature and check every page of its code against its code
-// directory.
+// Also checks every code page against the code directory.
 std::optional<Code> read_code(const QByteArray& slice, QString* error) {
     const auto fail = [&](const QString& why) {
         *error = why;
@@ -164,7 +157,7 @@ std::optional<Code> read_code(const QByteArray& slice, QString* error) {
     if (be32(super, 0) != kSuperblob) return fail(QStringLiteral("bad signature"));
     Code code;
     const uint32_t count = be32(super, 8);
-    // In 64 bits: an offset near the top of 32 would wrap past the checks.
+    // 64-bit: an offset near the 32-bit limit would wrap past the checks.
     const quint64 super_size = quint64(super.size());
     for (quint64 i = 0; i < count && 12 + i * 8 + 8 <= super_size; ++i) {
         const uint32_t type = be32(super, qsizetype(12 + i * 8)), blob_at = be32(super, qsizetype(16 + i * 8));
@@ -269,10 +262,8 @@ bool has_unit(X509* cert, const char* unit) {
     return false;
 }
 
-// The signature over `directory` is one by Roblox's Developer ID, chained to
-// the pinned Apple root. Certificates expire long before the code they signed
-// is retired, so the chain is checked without the clock, as macOS does for a
-// timestamped signature.
+// Signed by Roblox's Developer ID, chained to the pinned Apple root. Checked
+// without the clock, as macOS does for timestamped signatures.
 QString signed_by_roblox(const QByteArray& directory, const QByteArray& wrapped) {
     if (wrapped.size() <= 8) return QStringLiteral("not signed");
     const QByteArray der = wrapped.mid(8);
@@ -280,8 +271,7 @@ QString signed_by_roblox(const QByteArray& directory, const QByteArray& wrapped)
     Owned<CMS_ContentInfo, CMS_ContentInfo_free> cms(d2i_CMS_ContentInfo(nullptr, &p, der.size()));
     if (!cms) return QStringLiteral("bad signature");
     Owned<BIO, BIO_free_all> content(BIO_new_mem_buf(directory.constData(), int(directory.size())));
-    // The digest and the signer's signature only; the chain is checked below,
-    // against Apple's root and with code signing's rules rather than e-mail's.
+    // Digest and signer only; the chain is checked below with code signing rules.
     if (CMS_verify(cms.get(), nullptr, nullptr, content.get(), nullptr, CMS_BINARY | CMS_NO_SIGNER_CERT_VERIFY) != 1) {
         return QStringLiteral("signature does not match the code directory");
     }
@@ -304,8 +294,7 @@ QString signed_by_roblox(const QByteArray& directory, const QByteArray& wrapped)
         failure = QStringLiteral("could not check the signer");
     } else {
         X509_STORE_CTX_set_purpose(context.get(), X509_PURPOSE_ANY);
-        // Apple marks its Developer ID markers critical, and OpenSSL knows
-        // none of them; they are checked by name below instead.
+        // Apple marks its extensions critical and OpenSSL doesn't know them; checked by name below.
         X509_VERIFY_PARAM_set_flags(X509_STORE_CTX_get0_param(context.get()),
                                     X509_V_FLAG_NO_CHECK_TIME | X509_V_FLAG_IGNORE_CRITICAL);
         if (X509_verify_cert(context.get()) != 1) {
@@ -326,10 +315,8 @@ QString signed_by_roblox(const QByteArray& directory, const QByteArray& wrapped)
     return failure;
 }
 
-// An XML property list: dictionaries, arrays, strings, data, booleans and
-// numbers, as CodeResources and Info.plist hold them. Without recursion:
-// Info.plist is read before anything says it is Roblox's, and nesting as
-// deep as a file can make would otherwise run the stack out.
+// The plist subset CodeResources and Info.plist use. Iterative, since Info.plist
+// is read before it is trusted and deep nesting would exhaust the stack.
 QVariant read_plist_value(QXmlStreamReader& xml) {
     struct Container {
         bool dict;
@@ -339,7 +326,6 @@ QVariant read_plist_value(QXmlStreamReader& xml) {
     };
     std::vector<Container> open;
     for (;;) {
-        // At the start of a value: a container opens, or a leaf is read whole.
         const QStringView name = xml.name();
         std::optional<QVariant> value;
         if (name == u"dict" || name == u"array") {
@@ -352,8 +338,6 @@ QVariant read_plist_value(QXmlStreamReader& xml) {
         } else {
             value = xml.readElementText();
         }
-        // Each finished value goes into its container, and each container
-        // that ends is a finished value of the one around it.
         for (;;) {
             if (value) {
                 if (open.empty()) return *value;
@@ -411,8 +395,7 @@ std::optional<Bundle> bundle_at(const QString& path, QString* error) {
     }
     const auto info = read_plist(bundle.info_plist);
     QString name = info ? info->value(QStringLiteral("CFBundleExecutable")).toString() : QString();
-    // An empty CFBundleExecutable names the bundle's own executable, as on
-    // macOS: Studio's inner RobloxStudio.app has one.
+    // An empty CFBundleExecutable means the bundle's name, as on macOS (Studio's inner app).
     if (info && name.isEmpty()) name = QFileInfo(path).completeBaseName();
     if (bundle.seal_root.isEmpty() || name.isEmpty() || name.contains(QLatin1Char('/'))) {
         *error = QStringLiteral("%1 is not a bundle").arg(QFileInfo(path).fileName());
@@ -423,12 +406,10 @@ std::optional<Bundle> bundle_at(const QString& path, QString* error) {
     return bundle;
 }
 
-// A bundle's executable checked, and every file of it against its seal; the
-// executable's code, for its caller to pin.
+// Checks the executable and every sealed file; returns the code for the caller to pin.
 std::optional<Code> check_bundle(const QString& path, int depth, QString* error);
 
-// Nested code, a bundle or a single executable file: its code-directory
-// hashes, one per architecture.
+// A nested bundle or executable's cdhashes, one per architecture.
 std::optional<QList<QByteArray>> nested_cdhashes(const QString& path, int depth, QString* error) {
     if (QFileInfo(path).isDir()) {
         const auto code = check_bundle(path, depth + 1, error);
@@ -462,7 +443,6 @@ std::optional<Code> check_bundle(const QString& path, int depth, QString* error)
     if (!seal) return fail(QStringLiteral("its seal cannot be read"));
     const QVariantHash files = seal->value(QStringLiteral("files2")).toHash();
 
-    // Every sealed file present and unchanged.
     QStringList nested_roots;
     for (auto it = files.cbegin(); it != files.cend(); ++it) {
         const QString file = bundle->seal_root + QLatin1Char('/') + it.key();
@@ -494,7 +474,7 @@ std::optional<Code> check_bundle(const QString& path, int depth, QString* error)
         }
     }
 
-    // Nothing added beside them, except what the seal's rules leave out.
+    // Nothing extra beside them, except what the seal's rules omit.
     QList<QRegularExpression> omitted;
     const QVariantHash rules = seal->value(QStringLiteral("rules2")).toHash();
     for (auto it = rules.cbegin(); it != rules.cend(); ++it) {
@@ -508,7 +488,7 @@ std::optional<Code> check_bundle(const QString& path, int depth, QString* error)
         if (relative == executable || relative.startsWith(QStringLiteral("_CodeSignature/")) || files.contains(relative)) {
             continue;
         }
-        // The client's FastFlags, the one file Stud writes among its code.
+        // The FastFlags file, the only one Stud writes among the code.
         if (depth == 0 && relative == QLatin1String(kSettingsFile)) continue;
         if (std::any_of(nested_roots.cbegin(), nested_roots.cend(),
                         [&](const QString& root) { return relative.startsWith(root); })) {

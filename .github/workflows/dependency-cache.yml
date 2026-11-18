@@ -1,39 +1,18 @@
-# Fetches what Rosemary's build downloads and caches it. Nothing else.
-#
-# It exists because of how GitHub scopes caches. The release workflow only
-# ever runs on a tag, and a cache created for one tag is not visible to
-# another, GitHub's own words: "a run cannot restore caches from
-# arbitrary sibling branches, child branches, or a different tag". So
-# every release would fetch Rosemary's crates and git dependencies again,
-# and the cache it wrote could only ever help a re-run of that release.
-#
-# A run on the DEFAULT BRANCH is the exception: those caches are visible to
-# every ref, tags included. So this workflow does one job, populate them.
-#
-# It is deliberately not part of the release pipeline and builds nothing.
-# Run it after the Rosemary branch moves, or whenever a release reports a
-# cold cache. One copy, shared by every release job: downloads are the
-# same in every container.
+# Fetches and caches what Rosemary's build downloads. Caches from a tag aren't
+# visible to other tags, but the default branch's are visible to every ref, so this
+# fills them from main. Run it after the Rosemary branch moves or when a release
+# reports a cold cache.
 
 name: Dependency cache
 
 on:
-  # By hand only. Nothing here should ever start itself: nothing about a
-  # normal push needs it.
-  #
-  # RUN IT FROM main. That is not a style preference, a run's caches are
-  # scoped to the ref it ran on, and only the default branch's are visible
-  # to every other ref. Run this from a tag or a side branch and the caches
-  # it writes cannot be read by anything else, which is the exact problem
-  # it exists to solve.
+  # Manual only. Run it from main: only the default branch's caches are shared.
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  # One at a time, and a newer run wins: two of these racing would just
-  # fetch the same thing twice.
   group: dependency-cache
   cancel-in-progress: true
 
@@ -48,9 +27,7 @@ jobs:
         uses: ./.github/actions/setup
 
       - name: Fetch Rosemary's dependencies
-        # Into ~/.cargo, which the setup step's cache saves when the job
-        # ends. Cargo.lock decides what is fetched, the same set the
-        # release's builds resolve.
+        # Into ~/.cargo, saved by the setup step's cache; Cargo.lock decides what's fetched.
         run: |
           repo="$(sed -n 's/^set(STUD_ROSEMARY_REPOSITORY "\([^"]*\)".*/\1/p' CMakeLists.txt)"
           branch="$(sed -n 's/^set(STUD_ROSEMARY_BRANCH "\([^"]*\)".*/\1/p' CMakeLists.txt)"

@@ -153,10 +153,7 @@ def main() -> int:
         pinned = "@sha256:" in image
         print(f"{CPAK.relative_to(ROOT)}: {'pinned' if pinned else 'on a tag'} ({image})")
 
-        # Pinned is not the same as current. A rebuilt release publishes a
-        # new image under the same tag, and a manifest still pinned to the
-        # old digest installs the old Stud, which looks exactly like a fix
-        # that did not work. Cheap to ask, so ask.
+        # A rebuilt release republishes the image under the same tag; a stale pin installs the old Stud.
         stale = False
         if pinned:
             repo, _, digest = image.partition("@")
@@ -166,8 +163,7 @@ def main() -> int:
                       f"    {published}\n"
                       f"  refill with --image-digest {published}", file=sys.stderr)
                 stale = True
-        # Non-zero when anything is still a placeholder, so this can gate a
-        # release step rather than only being read by a person.
+        # Non-zero while anything is a placeholder, so it can gate a release step.
         pending = any("PLACEHOLDER_" in p.read_text() or "'SKIP'" in p.read_text()
                       for p in (MANIFEST, PKGBUILD, PKGBUILD_BIN))
         return 1 if (pending or not pinned or stale) else 0
@@ -186,15 +182,10 @@ def main() -> int:
             print(f"{name} is not a sha256: {value}", file=sys.stderr)
             return 1
 
-    # A release can be rebuilt: delete a tag, push it again, and every asset
-    # is republished under the same name with different bytes. So these are
-    # matched by where they sit rather than by a placeholder that exists only
-    # until the first fill. An already-filled value is the stale case that
-    # most needs rewriting, and skipping it silently left AUR and Flathub
-    # advertising sums no published file has.
+    # A rebuilt release republishes assets with new bytes, so sums are matched by
+    # position, not placeholder, and filled values are rewritten too.
 
-    # The Flathub manifest: the sha256 under Stud's own source tarball. Only
-    # that; Rosemary's commit and sources are tools/update-flatpak-rosemary.sh's.
+    # Only Stud's tarball; Rosemary's entries are update-flatpak-rosemary.sh's.
     text = MANIFEST.read_text()
     for url_marker, value in (
             (f"/archive/refs/tags/{args.tag}.tar.gz", source_sha),):
@@ -208,8 +199,7 @@ def main() -> int:
         text = pattern.sub(lambda m: m.group(1) + value, text, count=1)
     MANIFEST.write_text(text)
 
-    # The flake: the same tarball, as Nix writes it. Rosemary is a flake
-    # input, which `nix flake update rosemary` moves.
+    # Rosemary is a flake input, moved by `nix flake update rosemary`.
     text = FLAKE.read_text()
     for url_marker, value in (
             (f"/archive/refs/tags/{args.tag}.tar.gz", source_sha),):
@@ -223,7 +213,6 @@ def main() -> int:
         text = pattern.sub(lambda m: m.group(1) + value, text, count=1)
     FLAKE.write_text(text)
 
-    # The source PKGBUILD has one source: the tag's tarball.
     text = PKGBUILD.read_text()
     single = re.compile(r"sha256sums=\('(\S+)'\)")
     match = single.search(text)
@@ -233,8 +222,7 @@ def main() -> int:
     report_change(PKGBUILD.name, "source tarball", match.group(1), source_sha)
     PKGBUILD.write_text(single.sub(f"sha256sums=('{source_sha}')", text, count=1))
 
-    # stud-bin has two, in source=() order: the release archive, then the
-    # tag's tarball for the Qt half it builds itself.
+    # In source=() order: the release archive, then the tarball for building the launcher.
     text = PKGBUILD_BIN.read_text()
     pair = re.compile(r"sha256sums=\('(\S+)'\n(\s+)'(\S+)'\)")
     match = pair.search(text)
@@ -247,15 +235,11 @@ def main() -> int:
         print(f"{PKGBUILD_BIN.name}: no pair of sha256sums found", file=sys.stderr)
         return 1
 
-    # cpak wants the image itself pinned: a tag can be moved, a digest
-    # cannot, and `cpak lock` refuses a manifest that only names a tag
-    # ("manifest version 3.0 requires a digest-pinned image").
+    # `cpak lock` requires a digest-pinned image.
     image = json.loads(CPAK.read_text())["image"]
     repo = image.split("@", 1)[0].rsplit(":", 1)[0]
-    # What the registry serves for the tag is what an install pulls, so a
-    # digest from anywhere else has to match it. The release workflow once
-    # pinned the local image's digest, which the push had re-encoded away:
-    # the registry had no such manifest, and every cpak install failed.
+    # Must match what the registry serves for the tag: the local digest is lost when
+    # the push re-encodes the image.
     published = registry_digest(repo, args.tag)
     if args.image_digest and published and args.image_digest != published:
         print(f"--image-digest {args.image_digest} is not what {repo}:{args.tag} "
@@ -268,11 +252,8 @@ def main() -> int:
         CPAK.write_text(json.dumps(data, indent=2) + "\n")
         print(f"cpak image:      {digest}")
 
-        # cpak checks the lock against the manifest for a local install and
-        # `cpak test` ("cpak.lock.json does not match the root manifest"), so
-        # it is regenerated here rather than left to go stale. It also
-        # resolves the image, so a failure means the pin is wrong: stop
-        # before anything is committed.
+        # Regenerated, since cpak checks the lock against the manifest. It also
+        # resolves the image, so a failure stops before anything is committed.
         lock = ROOT / "cpak.lock.json"
         if shutil.which("cpak"):
             rc = subprocess.run(["cpak", "lock", str(CPAK)], cwd=ROOT).returncode

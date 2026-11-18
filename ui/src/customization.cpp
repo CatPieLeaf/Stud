@@ -19,7 +19,6 @@ namespace stud::ui::customization {
 
 namespace {
 
-// Where each generated part lives in a customization folder, and the files it covers.
 struct PartFiles {
     QString directory;
     QStringList files;
@@ -47,8 +46,7 @@ PartFiles files_of(Part part) {
     return {};
 }
 
-// The build's record of what this module changed, beside the bundle, and the
-// originals it replaced.
+// Beside the bundle: what was changed, and the originals.
 QString state_dir(const client::Build& build) {
     return QFileInfo(build.app).absolutePath() + QStringLiteral("/.stud-customizations");
 }
@@ -60,8 +58,7 @@ bool copy_over(const QString& from, const QString& to) {
     return QFile::copy(from, to);
 }
 
-// Puts back every file a previous apply() changed: the original where there
-// was one, nothing where there was not.
+// Restores every original a previous apply() replaced, and removes files it added.
 void restore(const client::Build& build) {
     const QString state = state_dir(build);
     QFile manifest(state + QStringLiteral("/manifest"));
@@ -83,7 +80,7 @@ class Applier {
 public:
     explicit Applier(const client::Build& build) : build_(build), state_(state_dir(build)) {}
 
-    // Writes `data` (or the file `from`) to `relative`, keeping the original.
+    // `data` or the file `from`, keeping the original.
     bool put(const QString& relative, const QString& from, const QByteArray* data = nullptr) {
         const QString target = resources(build_) + QLatin1Char('/') + relative;
         if (QFileInfo::exists(target) && !copy_over(target, state_ + QStringLiteral("/originals/") + relative)) {
@@ -115,7 +112,7 @@ private:
 
 namespace {
 
-// The crash guard's own files: the last good set, and the mark of a trial.
+// The last good set, and the trial marker.
 QString guard_dir(client::Product product) {
     return QString::fromStdString(stud::paths::data_dir()) +
            (product == client::Product::Studio ? QStringLiteral("/customization-guard/studio")
@@ -124,7 +121,6 @@ QString guard_dir(client::Product product) {
 QString last_good_dir(client::Product product) { return guard_dir(product) + QStringLiteral("/last-good"); }
 QString trial_mark(client::Product product) { return guard_dir(product) + QStringLiteral("/trial"); }
 
-// Every file under `root`, relative to it, with its bytes' hash.
 QMap<QString, QByteArray> fingerprint(const QString& root) {
     QMap<QString, QByteArray> files;
     QDirIterator it(root, QDir::Files | QDir::NoSymLinks | QDir::Hidden, QDirIterator::Subdirectories);
@@ -139,7 +135,7 @@ QMap<QString, QByteArray> fingerprint(const QString& root) {
     return files;
 }
 
-// `to` made an exact copy of `from`, or emptied when `from` does not exist.
+// Makes `to` an exact copy of `from`, or empties it when `from` doesn't exist.
 void mirror(const QString& from, const QString& to) {
     QDir(to).removeRecursively();
     QDirIterator it(from, QDir::Files | QDir::NoSymLinks | QDir::Hidden, QDirIterator::Subdirectories);
@@ -182,8 +178,7 @@ bool apply(const client::Build& build, client::Product product, QString* error) 
         }
     }
 
-    // Every font family the customizations do not replace themselves, pointed at the
-    // custom font.
+    // Every font family the customizations don't replace points at the custom font.
     if (!font.isEmpty()) {
         const QString asset = QStringLiteral("rbxasset://fonts/") + font;
         const QDir families(resources(build) + QStringLiteral("/content/fonts/families"));
@@ -248,15 +243,14 @@ bool recolour(Part part, const QColor& colour, QString* error) {
     const QString dir = folder(client::Product::Player) + QLatin1Char('/') + p.directory;
     remove(part);
     for (const QString& name : p.files) {
-        // From the copy Stud kept if a customization replaced it, else the client's own.
+        // From the kept original if a customization replaced it.
         const QString relative = p.directory + QLatin1Char('/') + name;
         QString source = state_dir(*build) + QStringLiteral("/originals/") + relative;
         if (!QFileInfo::exists(source)) source = resources(*build) + QLatin1Char('/') + relative;
         QImage image(source);
         if (image.isNull()) continue;
         image = image.convertToFormat(QImage::Format_ARGB32);
-        // Multiplied in: white becomes the colour, black outlines stay black,
-        // and greys shade between; each pixel keeps its own alpha.
+        // Multiply: white becomes the colour, black stays, greys shade between; alpha kept.
         for (int y = 0; y < image.height(); ++y) {
             auto* line = reinterpret_cast<QRgb*>(image.scanLine(y));
             for (int x = 0; x < image.width(); ++x) {
@@ -298,7 +292,7 @@ QString disabled_folder(client::Product product) { return folder(product) + QStr
 void begin_run(client::Product product) {
     const QString last_good = last_good_dir(product);
     if (!QFileInfo::exists(guard_dir(product))) {
-        // The first run with the guard: what is there already counts as good.
+        // First run with the guard: the current set counts as good.
         mirror(folder(product), last_good);
         return;
     }
@@ -317,8 +311,6 @@ QStringList end_run(client::Product product, bool crashed) {
         mirror(current, last_good);
         return {};
     }
-    // The run with the changed set crashed: what is new or different since the
-    // last good set goes aside, and the last good set comes back.
     const QMap<QString, QByteArray> now = fingerprint(current);
     const QMap<QString, QByteArray> good = fingerprint(last_good);
     QStringList set_aside;

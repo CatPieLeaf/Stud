@@ -1,11 +1,6 @@
 #!/bin/bash
-# Installs Stud's desktop entry and icon into the user's own
-# ~/.local/share tree. Re-runnable; safe to run after every build.
-#
-# The icon has to land in the hicolor theme under the exact name the desktop
-# entry's Icon= key uses (the application id), at real sizes, a bare Icon=stud with
-# nothing installed silently renders as no icon at all, which is what Stud
-# shipped with.
+# Installs Stud's desktop entry and icons into ~/.local/share. Safe to re-run.
+# The icon must be in hicolor under the application id, or the entry shows none.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,8 +11,7 @@ if [[ ! -x "$stud_ui" ]]; then
 fi
 stud_ui="$(readlink -f "$stud_ui")"
 
-# The application id, read from the one place that defines it, so a
-# build-tree install and a packaged one register the same entry.
+# Read from CMakeLists.txt so build-tree and packaged installs agree.
 app_id="$(grep -m1 '^set(STUD_APP_ID' "$here/../CMakeLists.txt" | cut -d'"' -f2)"
 : "${app_id:?could not read STUD_APP_ID out of CMakeLists.txt}"
 
@@ -25,7 +19,6 @@ apps="$HOME/.local/share/applications"
 icons="$HOME/.local/share/icons/hicolor"
 mkdir -p "$apps"
 
-# Stud's own icon, and the red and blue studs of the Player and Studio actions.
 install_icon() {
     local source=$1 name=$2
     for size in 16 24 32 48 64 128 256 512; do
@@ -43,10 +36,7 @@ install_icon "$here/stud.png" "$app_id"
 install_icon "$here/../ui/resources/studred.png" "$app_id-player"
 install_icon "$here/../ui/resources/studblu.png" "$app_id-studio"
 
-# Some icon loaders (KDE's among them) will not read a theme directory that
-# has no index.theme of its own, even though the same theme is indexed in
-# /usr/share/icons. Without this the icons above are installed correctly and
-# still never resolve.
+# KDE's loader ignores a user theme directory without its own index.theme.
 if [[ ! -f "$icons/index.theme" ]]; then
     {
         echo "[Icon Theme]"
@@ -63,13 +53,8 @@ if [[ ! -f "$icons/index.theme" ]]; then
     } > "$icons/index.theme"
 fi
 
-# Icon= is written as an ABSOLUTE PATH rather than the theme name "stud".
-# The themed name does resolve (verified with a real icon-theme lookup), but it
-# depends on every consumer picking up a newly-added user icon directory, and
-# an absolute path is what actually shows up reliably; it is also what other
-# user-installed entries on this system do. The hicolor copies above are still
-# installed, because that is the correct thing for anything that does use the
-# theme.
+# An absolute Icon= path shows up at once; a theme name waits for every consumer
+# to notice the new icon directory. The hicolor copies serve anything using the theme.
 icon_path="$icons/512x512/apps/$app_id.png"
 sed -e "s|@STUD_EXEC@|$stud_ui|g" -e "s|@STUD_APP_ID@|$app_id|g" \
     -e "s|^Icon=$app_id-player$|Icon=$icons/512x512/apps/$app_id-player.png|" \
@@ -77,7 +62,7 @@ sed -e "s|@STUD_EXEC@|$stud_ui|g" -e "s|@STUD_APP_ID@|$app_id|g" \
     -e "s|^Icon=$app_id$|Icon=$icon_path|" \
     "$here/stud.desktop.in" | grep -v '^#' > "$apps/$app_id.desktop"
 chmod 644 "$apps/$app_id.desktop"
-# The windows of Roblox and Roblox Studio, each under its own entry and stud.
+# Hidden entries for the Roblox and Roblox Studio windows' icons.
 for client in "Player|Roblox Player|--roblox|player" "Studio|Roblox Studio|--studio|studio"; do
     IFS='|' read -r suffix name flag icon <<< "$client"
     sed -e "s|@STUD_EXEC@|$stud_ui|g" -e "s|@STUD_CLIENT_ID@|$app_id.$suffix|g" \
@@ -86,7 +71,6 @@ for client in "Player|Roblox Player|--roblox|player" "Studio|Roblox Studio|--stu
         "$here/stud-client.desktop.in" | grep -v '^#' > "$apps/$app_id.$suffix.desktop"
     chmod 644 "$apps/$app_id.$suffix.desktop"
 done
-# The place file types the entry opens in Studio.
 mime="$HOME/.local/share/mime"
 mkdir -p "$mime/packages"
 cp "$here/stud-mime.xml" "$mime/packages/$app_id.xml"
@@ -95,8 +79,7 @@ command -v update-mime-database >/dev/null 2>&1 && update-mime-database "$mime" 
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -f -t "$icons" || true
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q "$apps" || true
 command -v xdg-desktop-menu >/dev/null 2>&1 && xdg-desktop-menu forceupdate || true
-# KDE keeps its own service/desktop-entry index; a new .desktop is invisible to
-# the launcher and to window-to-icon matching until this is rebuilt.
+# KDE won't show a new entry, or match windows to its icon, until its index is rebuilt.
 for k in kbuildsycoca6 kbuildsycoca5; do
     if command -v "$k" >/dev/null 2>&1; then
         "$k" --noincremental 2>&1 | sed "s/^/$k: /"

@@ -1,7 +1,6 @@
 if(STUD_BUILD_UI)
     find_package(Qt6 REQUIRED COMPONENTS DBus)
-    # These two use what the desktop provides, so each reports skipped on
-    # a machine without it, a clean chroot or a CI container among them.
+    # These need desktop services and skip without them, e.g. in a chroot or CI container.
     add_executable(stud_gpu_enum_test gpu_enum_test.cpp)
     target_link_libraries(stud_gpu_enum_test PRIVATE stud_ui_gpu_enum)
     add_test(NAME gpu_enum_test COMMAND stud_gpu_enum_test)
@@ -12,13 +11,12 @@ if(STUD_BUILD_UI)
 
     set_tests_properties(gpu_enum_test notifications_test PROPERTIES SKIP_RETURN_CODE 77)
 
-    # Stud 1.x's leftovers removed, and nothing of 2.0's or the carried-over
-    # settings touched.
+    # Stud 1.x's leftovers removed; 2.0's files and carried-over settings untouched.
     add_executable(stud_stud1_cleanup_test stud1_cleanup_test.cpp)
     target_link_libraries(stud_stud1_cleanup_test PRIVATE stud_ui_stud1_cleanup)
     add_test(NAME stud1_cleanup_test COMMAND stud_stud1_cleanup_test)
 
-    # Button icons: one colour, the palette's, in a dark and a light scheme.
+    # Monochrome button icons in a dark and a light scheme.
     add_executable(stud_mono_icon_test mono_icon_test.cpp)
     target_link_libraries(stud_mono_icon_test PRIVATE stud_ui_mono_icon)
     add_test(NAME mono_icon_test COMMAND stud_mono_icon_test)
@@ -29,8 +27,7 @@ if(STUD_BUILD_UI)
     target_link_libraries(stud_launch_uri_test PRIVATE stud_ui_launch_uri)
     add_test(NAME launch_uri_test COMMAND stud_launch_uri_test)
 
-    # The log export writes a gzipped tar by hand; this checks the result
-    # against the format, and against a real tar where there is one.
+    # The hand-written gzipped tar, checked against the format and a real tar.
     add_executable(stud_log_archive_test log_archive_test.cpp)
     target_link_libraries(stud_log_archive_test PRIVATE stud_ui_log_archive)
     add_test(NAME log_archive_test COMMAND stud_log_archive_test)
@@ -61,8 +58,7 @@ if(STUD_BUILD_UI)
     target_link_libraries(stud_client_integrity_test PRIVATE stud_ui_mac_client)
     add_test(NAME client_integrity_test COMMAND stud_client_integrity_test)
 
-    # Roblox's code signature: the client on disk passes, tampering fails.
-    # Skipped without a client on disk.
+    # Roblox's code signature: the installed client passes, tampering fails. Skips without a client.
     add_executable(stud_code_signature_test code_signature_test.cpp)
     target_link_libraries(stud_code_signature_test PRIVATE stud_ui_mac_client)
     add_test(NAME code_signature_test COMMAND stud_code_signature_test)
@@ -94,10 +90,7 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/settings_scratch)
 add_test(NAME settings_test COMMAND stud_settings_test
          ${CMAKE_CURRENT_BINARY_DIR}/settings_scratch)
 
-# Every STUD_* variable the source reads is in docs/environment.md.
-#
-# The source root is passed in rather than discovered, so the test scans
-# the tree it was built from wherever ctest runs it.
+# Every STUD_* variable the source reads is documented in docs/environment.md.
 add_executable(stud_env_documented_test env_documented_test.cpp)
 add_test(NAME env_documented_test
          COMMAND stud_env_documented_test "${CMAKE_SOURCE_DIR}")

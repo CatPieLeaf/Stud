@@ -19,8 +19,7 @@ namespace stud::ui {
 
 namespace {
 
-// Discord's IPC framing: a little-endian opcode and payload length, then
-// the payload. Opcode 0 is the handshake, 1 an ordinary frame.
+// Framing: little-endian opcode and length, then the payload. 0 handshake, 1 frame.
 constexpr uint32_t kOpHandshake = 0;
 constexpr uint32_t kOpFrame = 1;
 
@@ -28,7 +27,7 @@ int g_fd = -1;
 std::string g_application_id;
 std::mutex g_mutex;
 int64_t g_nonce = 0;
-// What should be showing, so a Discord that appears later gets it too.
+// Kept so a Discord that starts later gets it too.
 DiscordActivity g_presence;
 bool g_has_presence = false;
 
@@ -40,11 +39,8 @@ std::string runtime_dir() {
 constexpr uint32_t kOpClose = 2;
 std::string g_inbox;
 
-// Reads whatever Discord has answered so far, without waiting. Every
-// handshake and SET_ACTIVITY gets a reply; never reading them let them
-// pile up for the whole session, and hid the one that matters: Discord
-// refuses a bad handshake with a CLOSE frame, which is said out loud
-// here. False when Discord has closed the connection.
+// Reads pending replies without waiting, so they don't pile up, and reports the
+// CLOSE frame Discord sends for a bad handshake. False when Discord closed.
 bool drain_replies() {
     char buf[4096];
     for (;;) {
@@ -73,9 +69,7 @@ bool drain_replies() {
     return true;
 }
 
-// One write of the whole frame, never waiting: the socket is
-// non-blocking, so a Discord that has stopped reading costs this update
-// rather than the thread that asked for it.
+// Non-blocking, so a Discord that stopped reading costs this update, not the thread.
 bool send_frame(uint32_t opcode, const std::string& payload) {
     if (g_fd < 0 || !drain_replies()) return false;
     uint32_t header[2] = {opcode, static_cast<uint32_t>(payload.size())};
@@ -85,8 +79,7 @@ bool send_frame(uint32_t opcode, const std::string& payload) {
     return n == static_cast<ssize_t>(frame.size());
 }
 
-// Minimal JSON string escaping. Presence text is a game name and a
-// creator name, both of which really can contain quotes and backslashes.
+// Game and creator names can contain quotes and backslashes.
 std::string escape(const std::string& s) {
     std::string out;
     out.reserve(s.size() + 8);
@@ -118,13 +111,8 @@ void close_connection() {
     g_inbox.clear();
 }
 
-// Discord listens on discord-ipc-0 through discord-ipc-9; a client tries
-// each in turn, because several Discord builds can run at once.
-//
-// A sandboxed Discord puts its socket in its own directory rather than
-// at the top of the runtime dir, so those are tried too: the Flatpak
-// builds under app/<id>/ and the Snap under snap.discord/. Only the top
-// level used to be tried, so presence never connected to either.
+// discord-ipc-0 to 9, since several Discord builds can run at once; also inside
+// the Flatpak (app/<id>/) and Snap (snap.discord/) directories.
 bool connect_locked() {
     if (g_fd >= 0) return true;
     static const char* const kDirs[] = {"", "/app/com.discordapp.Discord",
@@ -205,17 +193,13 @@ void send_presence_locked() {
                                  std::to_string(::getpid()) + ",\"activity\":" + activity +
                                  "},\"nonce\":\"" + std::to_string(++g_nonce) + "\"}";
     if (!send_frame(kOpFrame, payload)) {
-        // Discord went away. Drop the connection so keep_connected()
-        // reconnects rather than writing into a dead socket forever.
+        // Discord went away; keep_connected() reconnects.
         close_connection();
     }
 }
 
-// Discord can open after Stud, and restart under it. Equibop and Vesktop do
-// this the most: their RPC server lives and dies with the app and replaces
-// its socket each time. Retrying only on a presence change left someone who
-// stays in one game with nothing, so this watches the connection and shows
-// the current presence on every new one.
+// Discord can start after Stud or restart (Equibop and Vesktop replace their socket
+// each time), so the connection is watched and the presence resent on reconnect.
 void keep_connected() {
     constexpr auto kRetryInterval = std::chrono::seconds(5);
     for (;;) {
@@ -234,7 +218,7 @@ void discord_rpc_start(const std::string& application_id) {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_application_id = application_id;
     if (g_application_id.empty()) return;
-    // Discord not running is an ordinary condition, not an error.
+    // Discord not running is normal.
     connect_locked();
     std::thread(keep_connected).detach();
 }

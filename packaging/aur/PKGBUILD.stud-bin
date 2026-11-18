@@ -1,28 +1,9 @@
 # Maintainer: CatPieLeaf <catpieleaf@proton.me>
 #
-# The mostly-prebuilt package. It installs the release archive CI built
-# from the tag, so no network beyond the two files makepkg fetches itself
-# before build() runs, and compiles ONLY the launcher, the one executable
-# that links Qt.
-#
-# The launcher cannot be shipped prebuilt. A Qt program built against one
-# distribution's Qt does not run on another's, and this archive is built
-# on Fedora: installed as-is on Arch, /usr/bin/stud dies at the loader
-# with `copy relocation against non-copyable protected symbol
-# QLocalServer::staticMetaObject ... GNU_PROPERTY_1_NEEDED_INDIRECT_
-# EXTERN_ACCESS`, because Arch builds Qt with indirect external access.
-# Measured, not assumed. Rosemary links no Qt and runs as the archive
-# has it.
-#
-# So the build below turns Rosemary off (STUD_BUILD_ROSEMARY=OFF) and
-# rebuilds `stud` against the Qt this machine has, exactly as the release
-# workflow's own Arch package does.
-#
-# This is the one that belongs in the AUR. The source PKGBUILD beside it
-# compiles Rosemary, whose cargo build fetches git dependencies while it
-# runs, and makepkg only downloads what is in source=(): in a clean chroot
-# there is no network at that point, so it cannot build there.
-# packaging/aur/README.md has the whole of that reasoning.
+# The package published to the AUR. Installs the release archive and rebuilds only
+# the launcher against Arch's Qt: Arch builds Qt with indirect external access, so a
+# launcher linked against Fedora's Qt fails with a copy relocation error. Rosemary
+# links no Qt and is used as shipped. See packaging/aur/README.md.
 
 pkgname=stud-bin
 _pkgname=stud
@@ -34,9 +15,7 @@ url="https://github.com/CatPieLeaf/Stud"
 license=('AGPL-3.0-or-later')
 provides=("$_pkgname=$pkgver")
 conflicts=("$_pkgname")
-# The same list as the source PKGBUILD, and it has to stay that way: a
-# dependency that only one of them names is a broken package for half the
-# people who install it.
+# Must match the source PKGBUILD's list.
 depends=(
   'gamemode'
   'qt6-base'
@@ -57,8 +36,7 @@ depends=(
 optdepends=(
   'mangohud: the performance overlay Stud can switch on in Settings'
 )
-# Already-built binaries: there is nothing here for makepkg to strip that
-# upstream did not mean.
+# Prebuilt binaries keep their symbols.
 options=(!strip !debug emptydirs)
 makedepends=(
   'cmake'
@@ -66,22 +44,15 @@ makedepends=(
   'git'
   'vulkan-headers'
 )
-# The tag carries no leading "v", match what is actually published. The
-# source tarball is here for the launcher, not for a full build.
+# The source tarball is only for building the launcher.
 source=("$pkgname-$pkgver.tar.zst::$url/releases/download/$pkgver/stud-$pkgver-$CARCH.tar.zst"
         "$_pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")
-# Filled in at publish time from the archive the release actually
-# serves, `updpkgsums`, or the value the release workflow prints at the
-# end of its run. A checksum belongs to one specific archive, so a stale
-# one is worse than an obvious gap: this carried the digest of a release
-# that was later deleted, which would have failed every install with a
-# corruption error rather than a missing-file one.
+# Filled in at release time (updpkgsums or the release workflow's output).
 sha256sums=('545f43641c591bb6855cce9c3e8d14e1c53cb17a6943be07947d21a8ce640c94'
             'f5402fd159f9dbd1b2f2c6d2ce472c1134a5b4b42d64a58b9c76ed0601f181d1')
 
 build() {
-  # Just the launcher: Rosemary, which the archive already supplies, is
-  # not built.
+  # Only the launcher; Rosemary comes from the archive.
   cmake -S "Stud-$pkgver" -B build -G Ninja \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DCMAKE_INSTALL_PREFIX=/usr \
@@ -92,14 +63,10 @@ build() {
 }
 
 package() {
-  # The archive is the install tree rooted at usr/, which is exactly what
-  # a package is. Nothing is rebuilt, only relocated below.
+  # The archive is the install tree rooted at usr/.
   cp -a usr "$pkgdir"/
 
-  # Arch does not use /usr/libexec, a package's own executables belong
-  # in /usr/lib/<pkg>/, and namcap reports anything under libexec as
-  # misplaced. stud-ui looks for Rosemary in both, so the binaries need
-  # no rebuild for this.
+  # Arch has no /usr/libexec; stud-ui looks for Rosemary in lib/stud too.
   if [ -d "$pkgdir/usr/libexec/stud" ]; then
     mkdir -p "$pkgdir/usr/lib"
     cp -a "$pkgdir/usr/libexec/stud" "$pkgdir/usr/lib/stud-helpers"
@@ -107,8 +74,6 @@ package() {
     rm -rf "$pkgdir/usr/lib/stud-helpers" "$pkgdir/usr/libexec"
   fi
 
-  # ...and the launcher built above replaces the archive's own, which was
-  # compiled against a different distribution's Qt. See the header for
-  # what happens without this.
+  # Replace the archive's launcher, built against Fedora's Qt.
   install -Dm755 build/ui/stud-ui "$pkgdir/usr/bin/stud"
 }

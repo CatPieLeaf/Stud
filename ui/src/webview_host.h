@@ -2,27 +2,18 @@
 
 #include <QString>
 
-// The client's web views, shown with QtWebEngine.
-//
-// Rosemary implements Apple's WKWebView for the client; started by Stud, it
-// hands every page to this host over a local socket instead of showing it
-// itself. Each WKWebView becomes a window here, and everything the client
-// expects back - navigation decisions, load events, script messages,
-// JavaScript results, dialogs, cookies - goes back over the same socket.
-// The protocol is described in Rosemary's crates/webkit/src/remote.rs, which
-// packaging/rosemary/webview-host.patch adds.
+// The client's web views, shown with QtWebEngine. Rosemary's WKWebView hands each
+// page to this host over a local socket, and navigation, load events, script
+// messages, dialogs and cookies go back the same way (crates/webkit/src/remote.rs
+// in the Rosemary fork).
 
 namespace stud::ui::webview {
 
-// Start listening, once; the socket's path, for STUD_WEBVIEW_SOCKET in the
-// client's environment, or empty if no socket could be opened.
+// Listens once; returns the path for STUD_WEBVIEW_SOCKET, or empty on failure.
 QString listen();
 
-// `stud --webview-helper`, which Rosemary starts when Stud names it in
-// STUD_WEBVIEW_HELPER: the same host, for one client, over the socket
-// Rosemary hands it (STUD_WEBVIEW_FD), and its windows in the compositor
-// Rosemary runs (WAYLAND_DISPLAY), which draws them inside the client's own
-// window. Returns the exit code.
+// `stud --webview-helper`, started by Rosemary: the same host for one client, on
+// STUD_WEBVIEW_FD, drawing into Rosemary's compositor (WAYLAND_DISPLAY). Returns the exit code.
 int run_helper(int argc, char** argv);
 
 }  // namespace stud::ui::webview

@@ -5,18 +5,15 @@
 #include <utility>
 #include <vector>
 
-// Discord Rich Presence over Discord's local IPC socket. No library: the
-// protocol is a handshake and JSON frames. Discord not running is an ordinary
-// condition; presence appears when it starts, and comes back when it restarts.
+// Rich Presence over Discord's local IPC socket: a handshake and JSON frames, so no
+// library. Presence appears whenever Discord is running.
 
 namespace stud::ui {
 
-// Roblox's own Discord application ("ROBLOX"), as Discord lists it among its
-// detectable games, so the presence reads as Roblox.
+// Roblox's own Discord application, so the presence reads as Roblox.
 inline constexpr const char* kRobloxDiscordApplicationId = "363445589247131668";
 
-// What the profile shows. Empty fields are left out; an image is an http(s)
-// URL, which Discord accepts in place of an uploaded asset key.
+// Empty fields are left out; images may be http(s) URLs instead of asset keys.
 struct DiscordActivity {
     std::string details;
     std::string state;
@@ -26,16 +23,14 @@ struct DiscordActivity {
     std::string small_text;
     int64_t start = 0;  // Unix seconds; 0 for none
     int64_t end = 0;
-    // What the short status ("Playing ...") names: 0 the application, 1 the
-    // state, 2 the details; -1 leaves it to Discord.
+    // What "Playing ..." names: 0 application, 1 state, 2 details; -1 Discord decides.
     int status_display = -1;
-    // At most two, Discord's limit.
+    // Discord allows two.
     std::vector<std::pair<std::string, std::string>> buttons;  // label, URL
 };
 
 void discord_rpc_start(const std::string& application_id);
 void discord_rpc_set(const DiscordActivity& activity);
-// Clears the presence and disconnects.
 void discord_rpc_stop();
 
 }  // namespace stud::ui

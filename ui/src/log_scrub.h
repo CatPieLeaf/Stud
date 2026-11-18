@@ -6,18 +6,14 @@
 
 namespace stud::ui {
 
-// A line of the client's output, fit for the session log. The log exists to be exported
-// and sent to someone, and on a teleport the client may log its whole join URL
-// with the signed ticket in it. The line stops at the value: what follows a
-// ticket in a join URL is no better, and a name in the ticket can hold a
-// space, so there is no safe place to pick the line up again.
+// Truncates a client log line at any ticket value: teleports can log the signed join
+// URL, and nothing after it is safe to keep.
 inline std::string scrub_client_log_line(std::string_view line) {
     static constexpr std::string_view kWord = "icket";  // ticket, Ticket
     for (size_t at = line.find(kWord); at != std::string_view::npos;
          at = line.find(kWord, at + 1)) {
         if (at == 0 || (line[at - 1] != 't' && line[at - 1] != 'T')) continue;
-        // What can sit between the word and its separator: "ticket", the same
-        // again inside an escaped string, ticket : x, and %22ticket%22.
+        // Matches ticket", escaped quotes, spaced colons and %22ticket%22.
         size_t after = at + kWord.size();
         for (;;) {
             if (after < line.size() &&

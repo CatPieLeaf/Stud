@@ -35,7 +35,7 @@ namespace stud::ui {
 
 namespace {
 
-// What is being written: the log's header, or the text Settings copies.
+// The log's header, or the text Settings copies.
 std::string g_text;
 
 void out(const char* format, ...) __attribute__((format(printf, 1, 2)));
@@ -68,8 +68,7 @@ std::string exists_size(const std::string& path) {
     return "present (" + std::to_string(info.size()) + " bytes)";
 }
 
-// Controllers as the kernel lists them, and whether this user can read
-// them.
+// Controllers the kernel lists, and whether this user can read them.
 void report_controllers() {
     DIR* dir = ::opendir("/dev/input");
     if (dir == nullptr) {
@@ -115,8 +114,7 @@ void report_controllers() {
 }
 
 
-// One field out of a "key: value" file, which is the shape of both
-// /proc/cpuinfo and /proc/meminfo.
+// One "key: value" field from /proc/cpuinfo or /proc/meminfo.
 std::string proc_field(const char* path, const char* key) {
     std::ifstream file(path);
     std::string text;
@@ -139,9 +137,7 @@ void report_cpu() {
     line("cpu", model);
     const long threads = ::sysconf(_SC_NPROCESSORS_ONLN);
     line("cpu threads", threads > 0 ? std::to_string(threads) : std::string());
-    // Only the sets that decide whether a build can run at all or take
-    // a wider path, the raw flag line is over 200 entries and says
-    // nothing useful in a report.
+    // Only the sets that decide which code paths can run; the full list is 200+ flags.
     {
         const std::string flags = " " + proc_field("/proc/cpuinfo", "flags") + " ";
         static const char* const kInteresting[] = {"sse4_2", "avx",  "avx2",     "avx512f",
@@ -157,8 +153,7 @@ void report_cpu() {
     }
     const std::string mem = proc_field("/proc/meminfo", "MemTotal");
     if (!mem.empty()) {
-        // Reported in kB; megabytes is what every other memory number in
-        // the header is in.
+        // kB to MB, like the header's other memory figures.
         try {
             line("memory", std::to_string(std::stoll(mem) / 1024) + " MB");
         } catch (const std::exception&) {
@@ -167,18 +162,13 @@ void report_cpu() {
     }
 }
 
-// Every GPU the real Vulkan loader reports, not just the selected one,
-// a hybrid laptop is the common case and which one Stud picked is
-// usually the first question.
+// Every GPU, not just the chosen one: hybrid laptops are common.
 void report_gpus(const stud::config::StudSettings& settings) {
     const auto gpus = stud::ui::enumerate_gpus();
     if (gpus.empty()) {
         line("gpu in use", "none (no Vulkan-capable device or loader)");
     } else {
-        // What Stud is actually running on, first and by itself. The
-        // index is what the setting stores, so a saved choice that no
-        // longer exists shows up as a mismatch rather than silently
-        // becoming device 0.
+        // The chosen one first; a saved choice that no longer exists shows as a mismatch.
         const stud::ui::GpuInfo* chosen = nullptr;
         for (const auto& gpu : gpus) {
             if (gpu.device_index == settings.gpu.device_index) chosen = &gpu;
@@ -193,14 +183,13 @@ void report_gpus(const stud::config::StudSettings& settings) {
         }
         bool first = true;
         for (const auto& gpu : gpus) {
-            if (gpu.device_index == settings.gpu.device_index) continue;  // named above
+            if (gpu.device_index == settings.gpu.device_index) continue;
             out("  %-22s [%u] %s\n", first ? "also present" : "", gpu.device_index,
                         gpu.name.c_str());
             first = false;
         }
     }
-    // The kernel's own view, which is what says whether a driver is
-    // even loaded for a device Vulkan did not report.
+    // The kernel's view shows whether a driver is loaded for a device Vulkan didn't list.
     std::string nodes;
     if (DIR* dir = ::opendir("/dev/dri")) {
         while (const dirent* entry = ::readdir(dir)) {
@@ -208,8 +197,7 @@ void report_gpus(const stud::config::StudSettings& settings) {
             if (name.rfind("render", 0) != 0 && name.rfind("card", 0) != 0) continue;
             if (!nodes.empty()) nodes += ", ";
             nodes += name;
-            // A render node that exists is no use if this account cannot open
-            // it: Mesa then falls back to drawing in software.
+            // An unreadable render node makes Mesa fall back to software rendering.
             if (name.rfind("render", 0) == 0) {
                 const std::string path = "/dev/dri/" + name;
                 const int fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
@@ -231,8 +219,7 @@ void report_gpus(const stud::config::StudSettings& settings) {
 
 }  // namespace
 
-// Rosemary's own version and commit, as `rosemary --version` reports them:
-// "0.5.0, e5a57fc". Empty when it does not answer.
+// "0.5.0, e5a57fc" from `rosemary --version`; empty when it doesn't answer.
 static std::string rosemary_version(const QString& rosemary) {
     if (rosemary.isEmpty()) return {};
     QProcess process;
@@ -254,8 +241,7 @@ static std::string rosemary_version(const QString& rosemary) {
 }
 
 void build_diagnostics() {
-    // The commit too: every build of a release is called by the release's
-    // version, and only the commit says which code ran.
+    // Every build of a release has the same version; only the commit says which code ran.
     if (std::string(STUD_COMMIT).empty()) {
         out("=== Stud %s ===\n\n", STUD_VERSION);
     } else {
@@ -293,7 +279,7 @@ void build_diagnostics() {
     } catch (const std::exception& e) {
         settings_error = e.what();
     }
-    // What the launch will really run on, not what the file says.
+    // The GPU the launch will use, not just what the file says.
     settings.gpu.device_index = stud::ui::chosen_gpu_index(settings.gpu);
     if (!settings_error.empty()) {
         line("settings", "unreadable: " + settings_error);

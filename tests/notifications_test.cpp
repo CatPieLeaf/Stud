@@ -1,6 +1,5 @@
-// Real freedesktop Notifications via QtDBus (ui/src/notifications.h). Sends a
-// genuine notification through this machine's session bus, so a popup appears
-// on screen during the run. Skipped where there is no notification service.
+// Sends a real notification over the session bus, so a popup appears during the run.
+// Skipped without a notification service.
 
 #include "notifications.h"
 #include "check.h"
@@ -13,8 +12,6 @@
 #include <cstdlib>
 
 int main(int argc, char** argv) {
-    // QtDBus needs a running Qt event loop / QCoreApplication to
-    // dispatch its real session-bus connection.
     QCoreApplication app(argc, argv);
 
     QDBusConnection bus = QDBusConnection::sessionBus();

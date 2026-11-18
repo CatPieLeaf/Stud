@@ -42,12 +42,10 @@ namespace {
 
 class Connection;
 
-// Whether this process is the helper: its windows are drawn inside the
-// client's, not shown on the desktop.
+// True in the helper, whose windows draw inside the client's.
 bool g_embedded = false;
 
-// One profile for every page, kept on disk, so a login lasts as it does in
-// the client's own WebKit data store.
+// One persistent profile, so logins last as in the client's WebKit store.
 QWebEngineProfile* profile() {
     static QWebEngineProfile* shared = [] {
         QWebEngineProfileBuilder builder;
@@ -60,8 +58,7 @@ QWebEngineProfile* profile() {
     return shared;
 }
 
-// Every cookie the profile holds, as the store reports them: Chromium only
-// says what changes, so the jar is followed from its first load.
+// Chromium only reports cookie changes, so the jar is tracked from the first load.
 QHash<QString, QNetworkCookie>& cookie_jar() {
     static QHash<QString, QNetworkCookie> jar;
     static const bool followed = [] {
@@ -81,7 +78,6 @@ QHash<QString, QNetworkCookie>& cookie_jar() {
     return jar;
 }
 
-// QtWebChannel's client library, which the page needs to reach the bridge.
 QString channel_library() {
     static const QString source = [] {
         QFile file(QStringLiteral(":/qtwebchannel/qwebchannel.js"));
@@ -99,10 +95,8 @@ QString quote(const QString& text) {
     return QString::fromUtf8(json.mid(1, json.size() - 2));
 }
 
-// `window.webkit.messageHandlers`, as WebKit gives pages: each handler's
-// `postMessage(body)` sends `{"v": body}` to the bridge, queued until the
-// channel is up. `__studSetHandlers` replaces the set on a page already
-// loaded, as WebKit's handlers change on a live page.
+// WebKit's window.webkit.messageHandlers: postMessage(body) sends {"v": body}
+// once the channel is up. __studSetHandlers replaces them on a loaded page.
 QString handlers_script(const QStringList& names) {
     const QString list = QString::fromUtf8(
         QJsonDocument(QJsonArray::fromStringList(names)).toJson(QJsonDocument::Compact));
@@ -136,8 +130,7 @@ QString handlers_script(const QStringList& names) {
         .arg(list);
 }
 
-// `navigator.userAgent` as the client set it, where Chromium would show its
-// profile's.
+// The client's user agent instead of Chromium's.
 QString agent_script(const QString& agent) {
     return QStringLiteral(
                "(() => { const agent = %1; for (const [key, value] of [['userAgent', agent], "
@@ -147,10 +140,8 @@ QString agent_script(const QString& agent) {
         .arg(quote(agent));
 }
 
-// The script a JavaScript call is run as: the client's source evaluated at
-// the page's global scope, its result as JSON WebKit's rules can be read
-// from - `{"v": value}`, `{"u": true}` for undefined, `{"t": true}` for what
-// WebKit does not bridge, `{"e": message}` for an exception.
+// Evaluates at global scope and returns JSON: {"v": value}, {"u": true} for
+// undefined, {"t": true} for what WebKit can't bridge, {"e": message}.
 QString evaluation_script(const QString& source) {
     return QStringLiteral(R"((function () {
   var v;
@@ -162,7 +153,6 @@ QString evaluation_script(const QString& source) {
         .arg(quote(source));
 }
 
-// WebKit's `WKNavigationType` for one of Qt's.
 int navigation_type(QWebEnginePage::NavigationType type) {
     switch (type) {
     case QWebEnginePage::NavigationTypeLinkClicked: return 0;
@@ -178,8 +168,6 @@ struct NsError {
     int code;
 };
 
-// The `NSError` WebKit reports for a load that failed with Chromium's
-// network error `code`.
 NsError ns_error(QWebEngineLoadingInfo::ErrorDomain domain, int code) {
     const QString url_domain = QStringLiteral("NSURLErrorDomain");
     if (domain == QWebEngineLoadingInfo::CertificateErrorDomain) return {url_domain, -1202};
@@ -199,7 +187,6 @@ NsError ns_error(QWebEngineLoadingInfo::ErrorDomain domain, int code) {
 
 class View;
 
-// What a page posts through `window.webkit.messageHandlers`.
 class Bridge : public QObject {
     Q_OBJECT
 public:
@@ -210,7 +197,6 @@ private:
     View* view_;
 };
 
-// Sends the client's agent where it differs from the profile's.
 class AgentInterceptor : public QWebEngineUrlRequestInterceptor {
 public:
     using QWebEngineUrlRequestInterceptor::QWebEngineUrlRequestInterceptor;
@@ -222,7 +208,6 @@ public:
 
 class Page;
 
-// One WKWebView: its window and page.
 class View : public QWebEngineView {
 public:
     View(Connection* connection, const QString& id, const QString& agent, bool developer);
@@ -231,15 +216,13 @@ public:
     Connection* connection;
     const QString id;
     Page* page_;
-    // Set while a call waits on the client, which must not see the page
-    // deleted under it; a destroy then waits for it to return.
+    // Set while a call waits on the client; destroying the page waits for it.
     int busy = 0;
     bool dead = false;
     bool loading = false;
     double progress = 0.0;
     bool started = false;
-    // A navigation the client cancelled: what Chromium reports of it next is
-    // not the client's to hear, as WebKit tells it nothing either.
+    // A navigation the client cancelled; WebKit wouldn't report its aftermath.
     QUrl rejected;
     QStringList handlers;
     struct UserScript {
@@ -286,7 +269,7 @@ private:
     View* view_;
 };
 
-// A page opened for `window.open`: it reports where it was going and goes.
+// Opened for window.open: reports the target URL and closes.
 class OpenerPage : public QWebEnginePage {
 public:
     OpenerPage(View* opener) : QWebEnginePage(profile(), opener), opener_(opener) {}
@@ -298,7 +281,6 @@ private:
     QPointer<View> opener_;
 };
 
-// One client process: its views, and the calls it has yet to answer.
 class Connection : public QObject {
 public:
     explicit Connection(QLocalSocket* socket) : QObject(socket), socket_(socket) {
@@ -322,15 +304,13 @@ public:
         socket_->flush();
     }
 
-    // Wait for the client to answer `call`, running Qt's events meanwhile; the
-    // answer's fields after the call number, or empty if the client went.
+    // Runs Qt's events while waiting. Empty if the client disconnected.
     QStringList wait(const QString& call) {
         QEventLoop loop;
         waits_[call] = Wait{&loop, {}};
         loop.exec();
         QStringList answer = waits_[call].answer;
         waits_.erase(call);
-        // Gone while this waited: deleted now that nothing waits in it.
         if (closed_ && waits_.empty()) socket_->deleteLater();
         return answer;
     }
@@ -360,7 +340,7 @@ private:
             if (view->busy == 0) view->deleteLater();
         }
         views_.clear();
-        // Not under a call still waiting in it; `wait` deletes it then.
+        // A waiting call deletes it instead.
         if (waits_.empty()) socket_->deleteLater();
     }
 
@@ -420,14 +400,11 @@ View::View(Connection* connection_, const QString& id_, const QString& agent_, b
     setAttribute(Qt::WA_DeleteOnClose, false);
     setWindowTitle(QStringLiteral("Stud"));
     if (g_embedded) {
-        // No frame of its own: the client's window is the frame. The title is
-        // how Rosemary's compositor knows which view this window is for.
+        // The client's window is the frame; Rosemary's compositor matches views by title.
         setWindowFlag(Qt::FramelessWindowHint);
         setWindowTitle(QStringLiteral("stud-view-") + id);
     }
     QWebEngineProfile* shared = profile();
-    // The first view's agent is the profile's; a view that sends another
-    // sends it through its interceptor.
     if (shared->httpUserAgent() != agent && !shared->property("stud-agent").isValid()) {
         shared->setHttpUserAgent(agent);
         shared->setProperty("stud-agent", agent);
@@ -455,8 +432,6 @@ View::View(Connection* connection_, const QString& id_, const QString& agent_, b
         progress = percent / 100.0;
         send_state();
     });
-    // A page's `window.close()`, which the client hears as the window it
-    // closed, as WebKit tells it.
     connect(page_, &QWebEnginePage::windowCloseRequested, this, [this] {
         hide();
         connection->send({QStringLiteral("closed"), id});
@@ -478,8 +453,6 @@ View::View(Connection* connection_, const QString& id_, const QString& agent_, b
             send_state();
             return;
         }
-        // A navigation that never came through a decision still starts
-        // before it ends.
         if (!was_started) connection->send({QStringLiteral("started"), id, url});
         const bool http_status = info.errorDomain() == QWebEngineLoadingInfo::HttpStatusCodeDomain;
         if (status == QWebEngineLoadingInfo::LoadSucceededStatus || http_status) {
@@ -514,8 +487,7 @@ void View::rebuild_scripts() {
         script.setRunsOnSubFrames(!main_only);
         collection.insert(script);
     };
-    // Before anything of the page's or the client's: the agent it is shown,
-    // then the bridge the client's scripts may already use.
+    // Before any page or client script: the user agent, then the bridge.
     if (agent != profile()->httpUserAgent()) add(QStringLiteral("stud-agent"), agent_script(agent), true, false);
     add(QStringLiteral("stud-channel"), channel_library(), true, true);
     add(QStringLiteral("stud-handlers"), handlers_script(handlers), true, true);
@@ -536,12 +508,10 @@ void View::send_state() {
 }
 
 void View::closeEvent(QCloseEvent* event) {
-    // Hidden, not destroyed: the view is the client's, which decides when it
-    // goes.
+    // Hidden, not destroyed: the client decides when the view goes.
     event->ignore();
     hide();
-    // A Roblox page closes the overlay it is shown in the way its own close
-    // button does: through the page's hybrid bridge, which tells the client.
+    // Closes Roblox's overlay through the page's own bridge, like its close button.
     page_->runJavaScript(
         QStringLiteral("window.Roblox && Roblox.Hybrid && Roblox.Hybrid.Overlay && "
                        "typeof Roblox.Hybrid.Overlay.close === 'function' && "
@@ -671,7 +641,6 @@ void Connection::handle(const QStringList& m) {
     } else if (kind == QLatin1String("handlers")) {
         target->handlers = m.mid(2);
         target->rebuild_scripts();
-        // A page already showing gets them now, as WebKit's live handlers.
         target->page_->runJavaScript(handlers_script(target->handlers), QWebEngineScript::MainWorld);
     } else if (kind == QLatin1String("agent")) {
         target->agent = m.value(2);
@@ -680,15 +649,13 @@ void Connection::handle(const QStringList& m) {
         target->rebuild_scripts();
     } else if (kind == QLatin1String("show")) {
         if (g_embedded) {
-            // At the view's size; Rosemary's compositor keeps it there.
             const int width = m.value(2).toInt();
             const int height = m.value(3).toInt();
             if (width > 0 && height > 0) target->resize(width, height);
             target->show();
             return;
         }
-        // Sized as Qt sizes any new window, not as the view: the view fills
-        // the client's whole window. After that the window is the person's.
+        // Default window size, not the view's, which fills the client window.
         target->show();
         target->raise();
         target->activateWindow();
@@ -746,7 +713,6 @@ int run_helper(int argc, char** argv) {
         return 2;
     }
     new Connection(socket);
-    // Rosemary gone, nothing is left to show.
     QObject::connect(socket, &QLocalSocket::disconnected, &app, &QCoreApplication::quit);
     return app.exec();
 }

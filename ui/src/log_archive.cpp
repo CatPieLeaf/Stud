@@ -19,16 +19,10 @@ namespace {
 
 constexpr int kBlock = 512;
 
-// One POSIX ustar header block.
-//
-// Written by hand rather than shelled out to tar: Stud would be handing a
-// child process a path the user just chose, from a process whose own
-// environment may be an AppImage's, to produce a file it could equally
-// well write itself. The format is fixed-width, forty lines, and has not
-// changed since 1988.
-// Where `name` splits into ustar's prefix and name fields: npos when it fits
-// the name field whole, or the slash that leaves at most 155 bytes before it
-// and 100 after. 0 when no slash does (and the name cannot be written).
+// Written by hand instead of running tar on a user-chosen path from a possibly
+// AppImage environment; ustar is small and fixed-width.
+// The slash splitting `name` into ustar's prefix (155 bytes) and name (100) fields:
+// npos when it fits the name field, 0 when it can't be split.
 std::size_t tar_split(const std::string& name) {
     if (name.size() <= 100) return std::string::npos;
     for (std::size_t slash = name.find('/'); slash != std::string::npos; slash = name.find('/', slash + 1)) {
@@ -47,15 +41,12 @@ void append_header(std::vector<char>& out, const std::string& name, std::size_t 
         std::memcpy(header + offset, text.data(), std::min(text.size(), field));
     };
     auto octal = [](unsigned long long value, int width) {
-        // Width includes the trailing NUL that every numeric ustar field
-        // carries, so the number itself gets width - 1 digits.
+        // Numeric fields end in NUL, leaving width - 1 digits.
         char buf[32];
         std::snprintf(buf, sizeof(buf), "%0*llo", width - 1, value);
         return std::string(buf);
     };
 
-    // ustar's name field, and the prefix field before it for a longer path,
-    // split at a slash (tar_name).
     const std::size_t split = tar_split(name);
     if (split == std::string::npos) {
         put(0, name, 100);
@@ -68,7 +59,7 @@ void append_header(std::vector<char>& out, const std::string& name, std::size_t 
     put(116, octal(0, 8), 8);
     put(124, octal(size, 12), 12);
     put(136, octal(static_cast<unsigned long long>(mtime), 12), 12);
-    std::memset(header + 148, ' ', 8);  // checksum field, blank while summing
+    std::memset(header + 148, ' ', 8);  // checksum field is blank while summing
     header[156] = type;
     put(257, "ustar", 6);
     put(263, "00", 2);
@@ -89,10 +80,8 @@ void append_padded(std::vector<char>& out, const QByteArray& data) {
     if (remainder != 0) out.resize(out.size() + (kBlock - remainder), '\0');
 }
 
-// gzip around miniz's raw deflate: the 10-byte header, then the stream,
-// then CRC32 and the uncompressed size, both little-endian. miniz can
-// write a zlib wrapper but not this one, and .tar.gz is what a person
-// asked for.
+// gzip around miniz's raw deflate: 10-byte header, stream, then little-endian
+// CRC32 and size. miniz only writes zlib's wrapper.
 bool gzip_to_file(const QString& target, const std::vector<char>& payload, QString* error) {
     std::size_t compressed_size = 0;
     void* compressed = ::tdefl_compress_mem_to_heap(
@@ -147,9 +136,7 @@ bool write_log_tarball(const QString& target, const QStringList& files, QString*
         return false;
     }
 
-    // One top-level directory, named after the archive itself, so
-    // unpacking this in a downloads folder leaves one folder rather than
-    // a scatter of session logs.
+    // One top-level folder named after the archive, so unpacking leaves no scatter of files.
     QString root = QFileInfo(target).fileName();
     for (const QString& suffix : {QStringLiteral(".gz"), QStringLiteral(".tar")}) {
         if (root.endsWith(suffix)) root.chop(suffix.size());
@@ -162,13 +149,12 @@ bool write_log_tarball(const QString& target, const QStringList& files, QString*
 
     for (const QString& path : files) {
         QFile file(path);
-        if (!file.open(QIODevice::ReadOnly)) continue;  // vanished mid-export; not worth failing
+        if (!file.open(QIODevice::ReadOnly)) continue;  // vanished mid-export
         const QByteArray contents = file.readAll();
         file.close();
         const std::string name =
             (root + QStringLiteral("/") + QFileInfo(path).fileName()).toStdString();
-        // A path ustar cannot hold even with its prefix field is left out
-        // rather than written under a truncated name.
+        // Skipped rather than written under a truncated name.
         if (tar_split(name) == 0) continue;
         append_header(tar, name, static_cast<std::size_t>(contents.size()),
                       QFileInfo(path).lastModified().toSecsSinceEpoch(), '0');
@@ -196,7 +182,6 @@ bool write_log_tarball(const QString& target, const QStringList& files, QString*
         append_padded(tar, contents);
     }
 
-    // Two zero blocks end an archive.
     tar.resize(tar.size() + 2 * kBlock, '\0');
     return gzip_to_file(target, tar, error);
 }

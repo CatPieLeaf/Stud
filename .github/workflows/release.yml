@@ -1,16 +1,7 @@
-# Builds Stud from source and attaches the packages to a release.
-#
-# It runs when a release is PUBLISHED, and at no other time: no push
-# builds, no pull-request builds. Publish it as a pre-release: the publish
-# job makes it the latest release once every package is attached.
-#
-# Run by hand (workflow_dispatch), it builds main, whichever branch it is
-# started from, and leaves every package as an artifact of the run: nothing
-# is uploaded to a release and no image is pushed, so the pipeline can be
-# exercised without cutting one.
-#
-# Rosemary's Cargo downloads are cached (see .github/actions/setup and
-# dependency-cache.yml), so a release fetches only what its branch changed.
+# Builds Stud and attaches the packages to a release. Runs when a release is
+# published (publish it as a pre-release; the publish job makes it latest once
+# everything is attached). A manual run builds main and keeps the packages as
+# artifacts without uploading or pushing anything.
 
 name: Release
 
@@ -19,9 +10,7 @@ on:
     types: [published]
   workflow_dispatch:
 
-# Read-only by default; the two jobs that need more say so themselves.
-# Only `publish` writes to the release, and only the cpak image push needs
-# ghcr.io.
+# Read-only; only `publish` and the cpak image push need more.
 permissions:
   contents: read
 
@@ -30,25 +19,16 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # The version the packages carry comes from the tag being released, so
-  # an rpm can never disagree with the release it is attached to. Empty
-  # on a manual run; .github/actions/setup fills it in from the tree and
-  # derives VERSION, the same without a leading "v".
+  # The tag's version, so packages always match their release. Empty on a manual
+  # run; .github/actions/setup fills it in and derives VERSION without the "v".
   TAG: ${{ github.event.release.tag_name }}
 
 jobs:
-  # A release's version bump and changelog entries, committed on top of the
-  # tag, and the tag moved onto that commit before anything is built: the
-  # version in every file, and this release's entry in the metainfo and the
-  # Terra spec from the ## SUMMARY: section of the release description. So
-  # the tag, its source archives and every package carry them. It happens
-  # while the release is still a pre-release, before anything that follows
-  # the latest release can see it. main is fast-forwarded to the same commit
-  # when it has not moved since the tag; otherwise the last job writes the
-  # same files to main itself.
-  #
-  # It runs on a manual run too, and does nothing there: the build jobs
-  # need it, and a skipped job would skip them.
+  # Commits the version bump and this release's changelog (from the description's
+  # ## SUMMARY:) on top of the tag and moves the tag there, while the release is
+  # still a pre-release. main is fast-forwarded when it hasn't moved; otherwise
+  # the bump job writes the same files. Does nothing on a manual run but still
+  # runs, since skipping it would skip the build jobs.
   prepare:
     name: Release files
     permissions:
@@ -73,8 +53,7 @@ jobs:
           git diff --stat
 
       - name: Move the tag onto them
-        # Nothing to commit when the tag already carries them, a re-run.
-        # An edit made with this workflow's own token starts no new run.
+        # Nothing to commit on a re-run. Edits with this token start no new run.
         if: github.event_name == 'release'
         run: |
           git add -u
@@ -91,26 +70,9 @@ jobs:
             echo "main has moved on since $TAG; the last job writes these files to it"
 
   packages:
-    # Built on fedora:44, matching the Fedora this is developed and
-    # tested on, so an installed package is the same build that was
-    # proven to work, rather than one compiled against an older glibc
-    # and hoped to behave the same.
-    #
-    # The cost, stated plainly: glibc 2.43 becomes the floor for whatever
-    # this job produces. Building on an older base is the usual way to
-    # keep that floor low; this trades that for the packages matching the
-    # build that actually works.
-    #
-    # The deb is NOT built here, for exactly that reason -- it has its own
-    # job on Ubuntu, so it links the Qt the distributions it is for carry.
-    # See the deb job further down.
-    #
-    # One build of Stud, wrapped several ways: the rpm, the Arch package,
-    # the Flatpak and the cpak image all come from the install tree this
-    # job produces, so they cannot hold different binaries.
-    #
-    # The AppImage is the exception and builds its own on Arch, which is
-    # what its bundling tool is written against.
+    # fedora:44, the system Stud is tested on, which sets a glibc 2.43 floor.
+    # The rpm, Arch package, Flatpak and cpak image all wrap this one install
+    # tree. The deb builds on Ubuntu and the AppImage on Arch, in their own jobs.
     name: Build and package
     permissions:
       contents: read
@@ -119,8 +81,7 @@ jobs:
     container: fedora:44
     steps:
       - name: Install build dependencies
-        # Before checkout on purpose: the image has no git, and
-        # actions/checkout and actions/cache both need it and tar.
+        # Before checkout: the image has no git or tar, which checkout and cache need.
         run: |
           dnf install -y --setopt=install_weak_deps=False --setopt=max_parallel_downloads=10 \
             gcc-c++ cmake ninja-build git pkgconf-pkg-config rpm-build gzip \
@@ -131,9 +92,7 @@ jobs:
 
       - uses: actions/checkout@v7
         with:
-          # The tag being released, not whatever the default branch holds:
-          # the packages attached to a release must be built from the code
-          # that release names.
+          # The released tag, so packages are built from the code it names.
           ref: ${{ env.TAG || 'main' }}
 
       - name: Version, Rust and the Cargo cache
@@ -141,13 +100,8 @@ jobs:
 
       - name: Build
         run: |
-          # /usr, not CMake's own /usr/local default. The rpm and the
-          # deb were never affected, CPACK_PACKAGING_INSTALL_PREFIX
-          # pins those, but the install tree every OTHER package is
-          # built from comes from `cmake --install`, which honours this
-          # and nothing else. Left unset it produced usr/local/bin/stud,
-          # which namcap rejects outright ("outside of a valid path") and
-          # which the Flatpak manifest cannot find at all.
+          # /usr: the install tree every non-CPack package uses comes from
+          # `cmake --install`, and /usr/local broke namcap and the Flatpak.
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_INSTALL_PREFIX=/usr \
@@ -155,28 +109,19 @@ jobs:
           cmake --build build -j"$(nproc)"
 
       - name: Test
-        # The one build that has its tests on: the packages below come from
-        # this tree, so what is tested here is what ships. A container has no
-        # GPU or session bus, and the tests that need one report skipped.
+        # The only build with tests, since the packages come from this tree. Tests
+        # needing a GPU or session bus skip in the container.
         run: ctest --test-dir build --output-on-failure
 
-      # One build, several wrappers. Building each format separately would
-      # mean several builds and no guarantee the packages contain
-      # the same binaries, so the install tree is produced once here and
-      # every package is made from it.
+      # One install tree for every package, so they can't hold different binaries.
       - name: Build rpm
-        # The rpm only. The deb has its own job, on the oldest Ubuntu it
-        # is meant to run on; see the comment there for what a deb built
-        # against a newer Qt actually did on the distributions it is for.
+        # The deb builds in its own job against an older Qt.
         run: cd build && cpack -G RPM
 
       - name: Stage install tree
         run: |
           DESTDIR="$PWD/install-tree" cmake --install build
-          # The layout every package below assumes. Checked here so a
-          # wrong install prefix fails immediately, with the reason, at
-          # the step that produced it, rather than surfacing much later
-          # as a namcap error or a Flatpak "cannot stat usr/bin/.".
+          # Fails here, with the reason, instead of later in namcap or the Flatpak build.
           for required in usr/bin/stud usr/libexec/stud/rosemary usr/share/metainfo; do
             if [ ! -e "install-tree/$required" ]; then
               echo "::error::the install tree has no $required, check CMAKE_INSTALL_PREFIX" >&2
@@ -184,24 +129,14 @@ jobs:
               exit 1
             fi
           done
-          # What the Flatpak manifest expects: the tree rooted at usr/,
-          # compressed the way its `type: archive` source reads it.
+          # Rooted at usr/, compressed as the Flatpak manifest's archive source expects.
           tar -C install-tree -caf "stud-${VERSION}-x86_64.tar.zst" usr
 
       - name: Validate install tree and rpm
-        # Two different questions, and both have shipped broken before.
-        #
-        # validate-payload asks whether the tree is any good: Stud 1 shipped
-        # FSR with an empty shader array behind it, because every check up
-        # to then looked at file names rather than inside the binary. It
-        # counts Rosemary's embedded upscaler shaders against the sources
-        # it was built from: a build without glslc still succeeds, and the
-        # upscalers in Settings then do nothing.
-        #
-        # compare-package-contents asks whether the package is a faithful
-        # copy of that tree, so a package can never quietly lack a file
-        # that the tree has. That was always found by someone installing
-        # a package and noticing, one missing piece at a time.
+        # validate-payload checks the tree is complete, counting Rosemary's embedded
+        # upscaler shaders against their sources (a build without glslc succeeds
+        # with useless upscalers). compare-package-contents checks the package
+        # matches the tree byte for byte.
         run: |
           python3 tools/validate-payload.py install-tree --label "install tree" \
             --rosemary-source build/rosemary-prefix/src/rosemary
@@ -219,14 +154,7 @@ jobs:
             stud-*-x86_64.tar.zst
           if-no-files-found: error
 
-  # The manifest is lint-able on its own: it needs no build, no install
-  # tree and no artifact, so it gets its own job and reports within a
-  # minute of the release starting rather than waiting on the build.
-  #
-  # It used to live in the `containers` job purely because that job has
-  # podman and does not itself run inside a container, which is a
-  # convenience, not a reason, and left the Flatpak manifest being
-  # checked by the job that builds the Arch package and the cpak image.
+  # Needs nothing built, so it reports within a minute of the release starting.
   flatpak-manifest:
     name: Flatpak manifest lint
     permissions:
@@ -238,20 +166,14 @@ jobs:
           ref: ${{ env.TAG || 'main' }}
 
       - name: Lint Flatpak manifest
-        # The same linter Flathub runs on a submission. It exits 0 for
-        # warnings (an available runtime update is one), so errors are
-        # read out of its JSON rather than from the exit code alone.
+        # Flathub's linter exits 0 on warnings, so errors are read from its JSON.
         run: |
           podman run --rm -v "$PWD:/src:z" -w /src \
             ghcr.io/flathub-infra/flatpak-builder-lint:latest \
             manifest packaging/flatpak/io.github.catpieleaf.Stud.yml | tee /tmp/flatpak-lint.json
           python3 - <<'PY'
           import json, sys
-          # A manifest with nothing to report produces NO output at all,
-          # not an empty JSON object, so this cannot go straight to
-          # json.load. Confirmed both ways against the real linter: the
-          # 6.10 manifest prints a warning object, the 6.11 one prints
-          # nothing.
+          # A clean manifest prints nothing at all, not an empty object.
           text = open("/tmp/flatpak-lint.json").read().strip()
           report = json.loads(text) if text else {}
           errors = report.get("errors", [])
@@ -265,11 +187,7 @@ jobs:
           PY
 
 
-  # Arch package and cpak image.
-  #
-  # These run on the runner rather than in the packages job, because that
-  # job runs inside a Fedora container and podman is on the runner, not in
-  # the container.
+  # Arch package and cpak image, on the runner, where podman is.
   containers:
     name: Arch package and cpak image
     needs: packages
@@ -288,12 +206,9 @@ jobs:
           rosemary: "false"
 
       - name: Pull the build images
-        # Registries answer 503, sometimes for hours: registry.fedoraproject.org
-        # failed a run at the cpak step, after everything else had built.
-        # Pulled once here, with retries, and from the second source each
-        # one is also published at when the first stays down, tagged under
-        # the name the steps below use; every podman call below then finds
-        # them locally. An image added below belongs in this list too.
+        # Registries sometimes return 503 for hours, so images are pulled once with
+        # retries, from a second source if needed, and found locally below. New
+        # images belong in this list.
         run: |
           pull() {
             local attempt
@@ -323,9 +238,7 @@ jobs:
           path: artifacts
 
       - name: Unpack install tree
-        # stud-<version>-x86_64.tar.zst IS the install tree, rooted at
-        # usr/, the same archive the Flatpak and stud-bin install. No
-        # second copy is made for this.
+        # The release archive is the install tree; no second copy.
         run: |
           mkdir -p install-tree
           archive="$(find artifacts -name 'stud-*-x86_64.tar.zst' | head -1)"
@@ -339,35 +252,23 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           version="${VERSION}"
-          # Only this file is ever built, so anything added to the
-          # from-source Containerfile instead reaches nobody.
-          #
-          # Before the step that rebuilds bin/stud against Arch's Qt: that
-          # one replaces it in this same tree, and the image is Fedora 44.
-          # Built after it, the image carried a launcher that needs Arch's
-          # newer Qt and would not start (issue #34).
+          # Before bin/stud is rebuilt against Arch's Qt below: the cpak image is
+          # Fedora-based and would get a launcher that can't start (#34).
           python3 tools/check-cpak-runtime.py
           podman build -f packaging/cpak/Containerfile.prebuilt \
             -t "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:${version}" \
             -t "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:latest" .
-          # A manual run builds the image, which is the test, and stops:
-          # :latest belongs to the newest release.
+          # A manual run stops after building; :latest is the newest release's.
           [ "$EVENT" = release ] || exit 0
           echo "$GH_TOKEN" | podman login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
-          # The digest the registry stores, from the push itself. The local
-          # image's own digest is not it: podman re-encodes the image as it
-          # pushes, and a pin to the local one named a manifest the registry
-          # did not have.
+          # The registry's digest, from the push: podman re-encodes the image.
           podman push --digestfile cpak-image-digest.txt \
             "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:${version}"
           podman push "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:latest"
           cat cpak-image-digest.txt
 
       - name: Verify the Arch recipes agree with each other and with the tree
-        # The AUR serves .SRCINFO, not the PKGBUILD, so a stale one
-        # advertises dependencies the package does not actually declare.
-        # It is generated, never hand-edited, and drifted once already
-        # (a dependency added to both PKGBUILDs and to neither .SRCINFO).
+        # The AUR serves .SRCINFO, so it's regenerated rather than hand-edited.
         run: |
           cat > /tmp/srcinfo.sh <<'SCRIPT'
           #!/bin/bash
@@ -375,10 +276,8 @@ jobs:
           pacman -Syu --noconfirm --needed base-devel python binutils >/dev/null
           useradd -m builder
           status=0
-          # All three PKGBUILDs describe one package, and PKGBUILD.bin --
-          # the one this workflow ships -- drifted from the other two
-          # without anything noticing. --tree also names which package
-          # owns each library the built binaries link.
+          # All three PKGBUILDs describe one package; --tree also names the owner of
+          # each linked library.
           python3 /work/tools/check-aur-depends.py --tree /work/install-tree || status=1
           for pair in "PKGBUILD:.SRCINFO" "PKGBUILD.stud-bin:.SRCINFO.stud-bin"; do
             pkgbuild="/work/packaging/aur/${pair%%:*}"
@@ -397,29 +296,14 @@ jobs:
             docker.io/library/archlinux:base-devel /srcinfo.sh
 
       - name: Build the launcher against Arch's own Qt
-        # bin/stud links Qt, so it cannot come from the fedora build.
-        # Measured on the 1.1.0 package, installed in a real archlinux
-        # container: it resolved every library and then refused to start
-        # with
-        #
-        #   copy relocation against non-copyable protected symbol
-        #   `_ZN12QLocalServer16staticMetaObjectE' ... error due to
-        #   GNU_PROPERTY_1_NEEDED_INDIRECT_EXTERN_ACCESS
-        #
-        # because Arch builds Qt with indirect external access, which
-        # forbids the copy relocation a binary built against Fedora's Qt
-        # carries. Rosemary links no Qt and is kept from the fedora build.
-        #
-        # So only the launcher is rebuilt here, exactly as the Flatpak does
-        # it (STUD_BUILD_ROSEMARY=OFF), and it replaces bin/stud in the
-        # install tree everything below is made from, which keeps the byte
-        # comparison honest, because the comparison is against this same
-        # merged tree.
+        # Arch builds Qt with indirect external access, so a launcher linked against
+        # Fedora's Qt fails with a copy relocation error. Only bin/stud is rebuilt
+        # here (as in the Flatpak); Rosemary links no Qt and is kept.
         run: |
           cat > /tmp/qtbuild.sh <<'SCRIPT'
           #!/bin/bash
           set -eux
-          # git because the build fetches nlohmann/json and miniz.
+          # git for fetching nlohmann/json and miniz.
           pacman -Syu --noconfirm --needed base-devel cmake ninja git \
               qt6-base qt6-webengine qt6-webchannel vulkan-headers vulkan-icd-loader openssl
           cmake -S /work -B /tmp/qtonly -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
@@ -434,19 +318,12 @@ jobs:
           file install-tree/usr/bin/stud
 
       - name: Build Arch package
-        # makepkg is Arch's and refuses to run as root, hence the
-        # unprivileged user. It compiles nothing: the PKGBUILD copies the
-        # install tree that already exists (with the two Qt binaries
-        # replaced by the step above).
+        # makepkg refuses root. It only copies the existing install tree.
         run: |
           cp packaging/aur/PKGBUILD.bin "$PWD/PKGBUILD"
           cat > /tmp/makepkg.sh <<'SCRIPT'
           #!/bin/bash
-          # The shebang matters: this file is mounted into the container
-          # and exec'd directly, and without one the kernel refuses it,
-          # `exec container process /makepkg.sh: Exec format error`. It
-          # went unnoticed because the step never ran this far before;
-          # podman was missing from the container entirely.
+          # Needs a shebang: it's exec'd directly inside the container.
           set -eux
           pacman -Syu --noconfirm --needed base-devel zstd
           useradd -m builder
@@ -461,11 +338,8 @@ jobs:
           ls -la ./*.pkg.tar.zst
 
       - name: Lint Arch package
-        # Arch's own package analyser, run on the real .pkg.tar.zst just
-        # built. namcap exits 0 whatever it finds, so its errors are read
-        # from its output. Warnings are expected and not fatal: most are
-        # "uninstalled dependency", which only means the container has no
-        # Arch desktop installed to resolve them against.
+        # namcap exits 0 whatever it finds, so errors are read from its output.
+        # Warnings are mostly uninstalled dependencies in a bare container.
         run: |
           cat > /tmp/namcap.sh <<'SCRIPT'
           #!/bin/bash
@@ -485,13 +359,8 @@ jobs:
             docker.io/library/archlinux:base-devel /namcap.sh
 
       - name: Validate Arch package contents
-        # Held to the install tree it was made from: same files, same
-        # bytes, and a payload that validates on its own terms. (The deb
-        # is checked the same way, in the job that now builds it.)
-        #
-        # Arch relocates /usr/libexec/stud to /usr/lib/stud because namcap
-        # rejects libexec; the comparison applies that one mapping rather
-        # than reporting it as a difference.
+        # Checked against its install tree. Arch moves libexec/stud to lib/stud,
+        # which the comparison maps.
         run: |
           pkg="$(find . -maxdepth 1 -name '*.pkg.tar.zst' | head -1)"
           [ -n "$pkg" ] || { echo "::error::no Arch package was built"; exit 1; }
@@ -499,16 +368,13 @@ jobs:
             --tree install-tree --package "$pkg" --kind arch --work /tmp/arch-payload
           python3 tools/validate-payload.py /tmp/arch-payload --label "Arch package"
 
-      # On its own under an obvious name: a manual run's artifacts are what
-      # testers install from, and `packages` holds a look-alike tar.zst that
-      # pacman refuses with "missing package metadata".
+      # Separate, since `packages` holds a tar.zst pacman would refuse.
       - uses: actions/upload-artifact@v7
         with:
           name: arch
           path: "*.pkg.tar.zst"
           if-no-files-found: error
 
-      # Only a release pushes the image, so only a release has this file.
       - uses: actions/upload-artifact@v7
         if: github.event_name == 'release'
         with:
@@ -517,17 +383,13 @@ jobs:
           if-no-files-found: error
 
   appimage:
-    # Its own build, on Arch: quick-sharun, which bundles it, is written
-    # against Arch's paths. The image carries every library it needs,
-    # glibc included, so the base sets no floor on where it runs.
+    # On Arch, which quick-sharun targets. The image bundles glibc, so the base sets no floor.
     name: AppImage
     permissions:
       contents: read
     needs: prepare
     runs-on: ubuntu-latest
-    # The packages packaging/Containerfile.appimage installs. Running it
-    # as the job's container means build-appimage.sh does not have to
-    # start one of its own.
+    # The packages Containerfile.appimage installs, so the script needn't start a container.
     container: archlinux:latest
     env:
       STUD_APPIMAGE_IN_CONTAINER: "1"
@@ -545,9 +407,7 @@ jobs:
 
       - uses: actions/checkout@v7
         with:
-          # The tag being released, not whatever the default branch holds:
-          # the packages attached to a release must be built from the code
-          # that release names.
+          # The released tag, so packages are built from the code it names.
           ref: ${{ env.TAG || 'main' }}
 
       - name: Version, Rust and the Cargo cache
@@ -555,29 +415,22 @@ jobs:
 
       - name: Build the AppImage
         env:
-          # get-debloated-pkgs.sh asks api.github.com for its package list;
-          # anonymous, a shared runner hits the rate limit and the job fails.
+          # Anonymous api.github.com requests hit the rate limit on shared runners.
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           export STUD_CMAKE_ARGS="-DSTUD_VERSION=${VERSION}"
           packaging/build-appimage.sh
 
       - name: Validate AppImage contents
-        # This one is its OWN build, in a different container, so it can
-        # drift from every other package independently, and has: the Stud 1
-        # release whose rpm was missing the FSR shaders had an AppImage
-        # that carried them. Validated on its own terms rather than
-        # compared, since nothing here shares that build's install tree;
-        # build-appimage.sh already counted Rosemary's shaders against
-        # their sources before bundling.
+        # Its own build, so it's validated on its own terms; build-appimage.sh already
+        # counted the shaders.
         run: |
           appimage="$(find build-appimage/packages -name '*.AppImage' | head -1)"
           [ -n "$appimage" ] || { echo "::error::no AppImage was built"; exit 1; }
           chmod +x "$appimage"
           ( cd /tmp && "$OLDPWD/$appimage" --appimage-extract >/dev/null )
           python3 tools/validate-payload.py /tmp/squashfs-root --label "AppImage"
-          # Update information, and the .zsync it points to. Read from the
-          # ELF section uruntime keeps it in, without running the image.
+          # Read from uruntime's ELF section without running the image.
           readelf -p .upd_info "$appimage" | grep -q 'gh-releases-zsync|CatPieLeaf|Stud|latest|' ||
             { echo "::error::the AppImage has no update information"; exit 1; }
           [ -s "$appimage.zsync" ] || { echo "::error::no .zsync next to the AppImage"; exit 1; }
@@ -591,28 +444,10 @@ jobs:
           if-no-files-found: error
 
   deb:
-    # Its own job, and its own container, for one reason: a Qt program
-    # built against one Qt runs on that version and everything newer, and
-    # on nothing older. Qt exports a symbol version per release and the
-    # loader checks it, so the floor a package sets is whatever Qt it was
-    # linked against. Measured, each package installing cleanly and then
-    # refusing to start:
-    #
-    #   ubuntu:26.04, deb built on fedora:44,
-    #     `libQt6Core.so.6: version 'Qt_6.11' not found`.
-    #
-    #   archlinux, Arch package built on fedora:44, `copy relocation
-    #     against non-copyable protected symbol
-    #     QLocalServer::staticMetaObject`, because Arch builds Qt with
-    #     indirect external access.
-    #
-    # So the deb is built on the oldest distribution it can run on, which
-    # Stud 2 moved: its WebEngine profiles need Qt 6.9, and Ubuntu 24.04
-    # carries 6.4. ubuntu:26.04 carries Qt 6.10, SDL 3.4 and glibc 2.43,
-    # and covers 26.04, Debian 14 and what is built on them. Checked on
-    # the binary rather than assumed, in the step below. Its Rust is older
-    # than Rosemary needs, so none is installed here and the setup step
-    # brings rustup's stable.
+    # Qt symbols are versioned, so a package runs only on the Qt it was linked
+    # against or newer. Built on ubuntu:26.04, the oldest with Qt 6.9 (WebEngine
+    # profiles), SDL 3.4 and glibc 2.43; the step below checks the binary's floor.
+    # Its Rust is too old for Rosemary, so setup installs rustup's stable.
     name: deb
     permissions:
       contents: read
@@ -634,16 +469,13 @@ jobs:
 
       - uses: actions/checkout@v7
         with:
-          # The tag being released, not whatever the default branch holds.
           ref: ${{ env.TAG || 'main' }}
 
       - name: Version, Rust and the Cargo cache
         uses: ./.github/actions/setup
 
       - name: Build
-        # /usr for the same reason the packages job pins it: the install
-        # tree the validation compares against comes from
-        # `cmake --install`, which honours this and nothing else.
+        # /usr, as in the packages job.
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
@@ -653,10 +485,7 @@ jobs:
           cmake --build build -j"$(nproc)"
 
       - name: Check the Qt floor this build sets
-        # The whole point of this job, checked on the bytes it produced.
-        # Anything above the Qt this container carries means the build
-        # picked up a Qt from somewhere else, and the package would not
-        # run on the distributions it is for.
+        # A higher Qt floor than this container's means a stray Qt was linked.
         run: |
           have="$(dpkg-query -W -f='${Version}' libqt6core6t64 2>/dev/null || dpkg-query -W -f='${Version}' libqt6core6)"
           have="Qt_$(echo "$have" | sed 's/^[0-9]*://; s/^\([0-9]*\.[0-9]*\).*/\1/')"
@@ -669,9 +498,6 @@ jobs:
         run: cd build && cpack -G DEB
 
       - name: Validate deb contents
-        # Against this job's own install tree, the one the deb was
-        # actually made from. Same two questions as every other package:
-        # are the bytes the build's own, and is the payload complete.
         run: |
           deb="$(find build -maxdepth 1 -name '*.deb' | head -1)"
           [ -n "$deb" ] || { echo "::error::no deb was built"; exit 1; }
@@ -697,9 +523,8 @@ jobs:
           if-no-files-found: error
 
   flatpak:
-    # Builds everything it ships itself, Rosemary included, against the
-    # runtime's own glibc; it needs only the manifest lint, because a
-    # manifest Flathub would reject is not worth spending a long build on.
+    # Builds everything itself, Rosemary included. Waits only on the manifest lint,
+    # since a manifest Flathub would reject isn't worth a long build.
     name: Flatpak bundle
     permissions:
       contents: read
@@ -719,26 +544,14 @@ jobs:
           rosemary: "false"
 
       - name: Rosemary at the head of the fork's branch
-        # The image is the freedesktop SDK itself, which has git, curl and
-        # python3's venv, all this needs.
-        # The same commit every other package builds, and offline Cargo
-        # sources generated from its Cargo.lock. The checkout is kept for
-        # the shader check below.
+        # The SDK image has git, curl and python3's venv. Rosemary's commit and its
+        # offline Cargo sources from Cargo.lock; the checkout is kept for the shader check.
         run: tools/update-flatpak-rosemary.sh "$RUNNER_TEMP/rosemary-flatpak"
 
       - name: Prepare manifest for local sources
-        # The manifest names Stud's release tarball so Flathub can build it
-        # as committed, but that digest belongs to one specific tag:
-        # re-cutting the tag changed it and the build died with "Wrong
-        # sha256 checksum for 1.1.0.tar.gz". Building the checkout is also
-        # the only way this job tests the code it was run against.
-        #
-        # A plain directory copy, not "type: git". Git needs a commit to
-        # resolve, and `git rev-parse HEAD` returns nothing inside this
-        # container (git refuses a repository it considers to be owned
-        # by someone else), which left an empty commit in the manifest
-        # and killed the build in git-lfs on an empty ref. A directory
-        # has nothing to resolve.
+        # The manifest's tarball digest belongs to one tag, so this builds the
+        # checkout instead. A directory source, since git inside this container
+        # can't resolve HEAD (repository ownership).
         run: |
           python3 - <<'PY'
           import re, sys
@@ -762,21 +575,13 @@ jobs:
           grep -n "path: \|url: \|commit: " packaging/flatpak/io.github.catpieleaf.Stud.yml
 
       - name: Verify no placeholders remain
-        # The dependency checksums are real in the tree, Flathub builds
-        # from the manifest as committed, so a manifest that only works
-        # after CI has rewritten it is not one they can build at all. The
-        # only substitution left is the archive path above.
+        # Checksums are real in the tree, since Flathub builds the manifest as committed.
         run: |
           ! grep -q PLACEHOLDER packaging/flatpak/io.github.catpieleaf.Stud.yml
 
       - name: Build and bundle
         run: |
-          # The container image is built around one KDE SDK and the
-          # manifest may name a newer one, there is no kde-6.11 image
-          # yet. --install-deps-from lets flatpak-builder fetch the
-          # runtime, SDK and base app the manifest actually asks for,
-          # instead of the build being pinned to whatever the image
-          # happens to carry.
+          # --install-deps-from fetches the runtime the manifest names, not the image's.
           flatpak remote-add --if-not-exists --system flathub \
             https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak-builder --force-clean --disable-rofiles-fuse \
@@ -787,11 +592,8 @@ jobs:
             "stud-${VERSION}-x86_64.flatpak" io.github.catpieleaf.Stud
 
       - name: Validate Flatpak contents
-        # Everything in it is compiled here, Rosemary with the SDK's glslc,
-        # so its shaders are counted against the sources it was built from.
-        # The layout is /app rather than /usr and it carries no
-        # .desktop-level files of its own in that tree, so those checks are
-        # skipped.
+        # Rosemary is built here with the SDK's glslc, so its shaders are counted.
+        # The tree is /app, so the desktop-file checks are skipped.
         run: |
           python3 tools/validate-payload.py build-dir/files \
             --label "Flatpak /app" --no-desktop-files \
@@ -808,11 +610,9 @@ jobs:
     permissions:
       contents: write
     needs: [packages, containers, appimage, deb, flatpak]
-    # Only a release has anywhere to publish to; a manual run's packages
-    # stay as the artifacts of its jobs.
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
-    # Not in a container: this is where the GitHub CLI already lives.
+    # The GitHub CLI lives on the runner.
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -824,15 +624,12 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           find artifacts -type f -printf '%f  %s bytes\n'
-          # Found rather than assumed: the artifact actions have changed
-          # where they unpack to before, and a release that silently gets
-          # no packages attached is worse than a loud failure.
+          # Found, not assumed: artifact actions have changed where they unpack.
           mapfile -t packages < <(find artifacts -type f \
             \( -name '*.rpm' -o -name '*.deb' -o -name '*.AppImage' \
                -o -name '*.pkg.tar.zst' -o -name 'stud-*-x86_64.tar.zst' \
                -o -name '*.flatpak' -o -name '*.AppImage.zsync' \))
-          # Every format is required. This is the last check that what
-          # the release promises is actually attached to it.
+          # Every format must be attached.
           for required in '\.rpm$' '\.deb$' '\.AppImage$' '\.AppImage\.zsync$' '\.flatpak$' '\.pkg\.tar\.zst$'; do
             printf '%s\n' "${packages[@]}" | grep -qE "$required" ||
               { echo "no package matching $required" >&2; exit 1; }
@@ -840,22 +637,15 @@ jobs:
           gh release upload "$TAG" "${packages[@]}" --clobber
 
       - name: Make it the latest release
-        # A release is published as a pre-release, which is what starts this
-        # workflow, and only becomes the latest release here, once every
-        # package is attached. Anything that follows the latest release,
-        # Terra's update bot among them, would otherwise see the new version
-        # while its archive was still being built and fail to download it.
-        # An edit made with this workflow's own token starts no new run.
+        # Only now marked latest, so followers of the latest release (Terra's bot)
+        # never see it before its archive exists. Edits with this token start no new run.
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: gh release edit "$TAG" --prerelease=false --latest
 
-  # The version bump and the checksums the Flathub, AUR and cpak recipes
-  # carry, both from the release that now exists (the tag name is the
-  # version), committed to main so neither is ever done by hand. Its own
-  # job: a failure here cannot undo the upload above, and a re-run of just
-  # this job is enough to finish it.
+  # Commits the version bump and recipe checksums (Flathub, AUR, cpak) to main.
+  # Its own job, so a failure can't undo the upload and can be re-run alone.
   bump:
     name: Version and checksums
     permissions:
@@ -863,12 +653,10 @@ jobs:
     needs: publish
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
-    # Not in a container: the .SRCINFO files are regenerated by makepkg in
-    # an archlinux container, and podman is on the runner.
+    # .SRCINFO is regenerated in an archlinux container, and podman is on the runner.
     steps:
       - uses: actions/checkout@v7
         with:
-          # main, not the tag: the result is committed there.
           ref: main
 
       - name: Version
@@ -877,9 +665,7 @@ jobs:
           rosemary: "false"
 
       - name: Bump the version and write the changelogs
-        # What the prepare job committed to the tag, now on main, from the
-        # same release description and the same date: nothing to do when
-        # main was fast-forwarded to that commit.
+        # Nothing to do when main was fast-forwarded to prepare's commit.
         env:
           RELEASE_BODY: ${{ github.event.release.body }}
           PUBLISHED: ${{ github.event.release.published_at }}
@@ -894,9 +680,7 @@ jobs:
           path: artifacts
 
       - name: Install cpak
-        # cpak.lock.json is cpak's own normalised copy of cpak.json, so only
-        # cpak can write it. Pinned, and checked against the digest of the
-        # release binary.
+        # cpak.lock.json can only be written by cpak; checked against the release binary.
         env:
           CPAK_VERSION: v2.13.4
           CPAK_SHA256: 6dd2b082e408e2cd1aa37ae9dd8c9063b593346e8b27b0571ed5c97fe206df2f
@@ -909,9 +693,7 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Fill in the checksums
-        # The release archive and the image digest come from this run's own
-        # artifacts. The source tarball is GitHub's, so the tool downloads
-        # it for the tag.
+        # From this run's artifacts; the tool downloads GitHub's source tarball.
         run: |
           archive_sha="$(find artifacts -name 'stud-*-x86_64.tar.zst' -exec sha256sum {} + | cut -d' ' -f1)"
           digest="$(find artifacts -name cpak-image-digest.txt -exec cat {} + | cut -d@ -f2)"
@@ -921,9 +703,7 @@ jobs:
           git status --short
 
       - name: Rosemary in the Flatpak manifest and the flake
-        # The fork's branch head, which this release built: the manifest's
-        # commit and offline Cargo sources, and the flake's locked input,
-        # so Flathub and Nix build the same Rosemary.
+        # The Rosemary commit this release built, so Flathub and Nix build the same one.
         run: |
           tools/update-flatpak-rosemary.sh "$RUNNER_TEMP/rosemary-flatpak"
           podman run --rm -v "$PWD":/work:z -w /work \
@@ -938,10 +718,9 @@ jobs:
             echo "main already carries this release's version and checksums"
             exit 0
           fi
-          # Set for the repository, not with -c: the rebase below commits too.
+          # Repository config, since the rebase below commits too.
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore: $VERSION release checksums"
-          # main may have moved while the release built; rebase once onto it.
           git push origin HEAD:main ||
             { git pull --rebase origin main && git push origin HEAD:main; }

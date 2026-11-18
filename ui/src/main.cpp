@@ -1,17 +1,8 @@
-// Stud's launcher: the one Qt process. Stud 2.0 runs Roblox's macOS client on
-// Rosemary, as a second process this one starts and stays with for the whole
-// session, so there is always a process left to report a crash.
-//
-// Two entry points into this binary:
-//  - a plain launch (desktop icon, no arguments) opens Roblox on its own home
-//    screen;
-//  - a deep link (`stud roblox-player:...` / `roblox://...`), which the browser
-//    hands over when Play is clicked on roblox.com, goes to the client as its
-//    own -protocolString. A link clicked while Roblox is already running is
-//    handed to the running client by Rosemary itself.
-//
-// The client is never modified. The only file Stud writes inside it is
-// ClientAppSettings.json (mac_client.h).
+// Stud's launcher. It starts Roblox's macOS client on Rosemary as a second
+// process and stays for the session, so a crash can always be reported.
+// A plain launch opens Roblox's home screen; a deep link (roblox://...) is
+// passed to the client as its -protocolString. Stud never modifies the client
+// apart from writing ClientAppSettings.json (mac_client.h).
 
 #include "desktop_entry.h"
 #include "chooser.h"
@@ -94,12 +85,9 @@ void show_crash_dialog(const QString& which_process);
 
 namespace {
 
-// The client, while it runs. Owned for the life of this process: a QProcess
-// that is destroyed kills its child, and this process outlives the session
-// anyway.
+// The running client. Owned for the life of this process.
 QProcess* g_client = nullptr;
-// The session was ended on purpose (the tray's Exit, Settings putting it
-// back, the loading screen's Cancel): its exit status is no crash.
+// Set when the session was ended on purpose, so its exit is not a crash.
 bool g_stop_requested = false;
 
 enum class SessionEnd { Running, Clean, Crashed };
@@ -108,20 +96,13 @@ bool g_tray_is_holding = false;
 bool g_crash_dialog_open = false;
 bool g_relaunch_pending = false;
 
-// The client's output on its way to the session log, a line at a time. The
-// deep link is a single-use join ticket and the log is made to be shared, so
-// neither it nor a ticket the client prints gets written.
+// The deep link holds a single-use join ticket, so it is kept out of the log.
 QByteArray g_deep_link;
-// Discord presence and the server region notification, fed the lines they
-// need.
 stud::ui::GameActivity* g_activity = nullptr;
-// What this session runs, so a restart opens the same one.
 stud::ui::client::Product g_product = stud::ui::client::Product::Player;
-// The write end of the client's output pipe, handed to it as stdout and
-// stderr; closed here once it has started.
+// The client's stdout/stderr pipe; closed here once it has started.
 int g_output_write = -1;
-// The Player got as far as starting its app. One that exits, even with 0,
-// before it did never opened its window: that is a failed start, not a quit.
+// A Player that exits before its app starts failed to start, whatever its code.
 std::atomic<bool> g_client_app_started{false};
 
 void forward_line(QByteArray line) {
@@ -143,12 +124,9 @@ void forward_line(QByteArray line) {
     std::fputc('\n', stdout);
 }
 
-// The client writes its log as it runs, from whichever of its threads has
-// something to say, and a write into a full pipe waits. So the pipe is as
-// large as the system allows, and a thread of its own drains it: the
-// interface thread being busy never holds up a frame of the client's.
-// False when the pipe cannot be made; the client then writes to this
-// process's own stdout, unscrubbed by nothing but that.
+// The client logs from any thread and a full pipe blocks it, so the pipe is as
+// large as allowed and a thread of its own drains it. False when the pipe
+// cannot be made; the client then writes to this process's stdout.
 bool start_output_reader() {
     int fds[2];
     if (::pipe2(fds, O_CLOEXEC) != 0) return false;
@@ -179,20 +157,18 @@ bool start_output_reader() {
     return true;
 }
 
-// One Stud at a time, by a lock this process holds for the whole session.
-// The kernel drops it when the holder dies however it dies, so it is never
-// stale. O_CLOEXEC keeps it out of the client: a process Rosemary leaves
-// behind for a while (its idle process server) must not keep it.
+// One Stud at a time. The kernel drops the lock when its holder dies.
+// O_CLOEXEC keeps it out of Rosemary's long-lived helper processes.
 int g_lock_fd = -1;
 
 std::string lock_path() { return stud::paths::runtime_dir() + "/stud.lock"; }
 
 bool another_instance_is_running() {
-    if (g_lock_fd >= 0) return false;  // this process holds it
+    if (g_lock_fd >= 0) return false;
     std::error_code ec;
     std::filesystem::create_directories(stud::paths::runtime_dir(), ec);
     const int fd = ::open(lock_path().c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
-    if (fd < 0) return false;  // cannot tell: let the launch proceed
+    if (fd < 0) return false;
     const bool free_to_take = ::flock(fd, LOCK_EX | LOCK_NB) == 0;
     if (free_to_take) ::flock(fd, LOCK_UN);
     ::close(fd);
@@ -201,7 +177,7 @@ bool another_instance_is_running() {
 
 bool take_instance_lock() {
     const int fd = ::open(lock_path().c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
-    if (fd < 0) return true;  // nothing to hold, nothing to refuse
+    if (fd < 0) return true;
     if (::flock(fd, LOCK_EX | LOCK_NB) != 0) {
         ::close(fd);
         return false;
@@ -210,11 +186,9 @@ bool take_instance_lock() {
     return true;
 }
 
-// MangoHud belongs in the client, not here: this process uses Vulkan only to
-// list the GPUs, and an inherited MANGOHUD=1 loaded the layer into a Qt
-// application with no frames (it crashed in MangoHud's NVIDIA sampler). Turned
-// off by name for this process only; the user's own value goes back to the
-// client untouched.
+// An inherited MANGOHUD=1 loaded the layer into this Qt process, which uses
+// Vulkan only to list GPUs, and crashed it. Disabled here; the client still
+// gets the user's value.
 QString g_host_layers_disable;
 bool g_layers_disable_was_set = false;
 
@@ -231,9 +205,7 @@ void keep_mangohud_out_of_this_process() {
     ::setenv("VK_LOADER_LAYERS_DISABLE", disabled.toLocal8Bit().constData(), 1);
 }
 
-// Variables that make a process load code it did not ask for. None of them
-// reaches the client unless Stud sets it itself: Stud never puts anything
-// into Roblox (the same rule as never modifying it).
+// Variables that inject code into a process. Stud never lets them reach Roblox.
 bool loads_code(const QString& name) {
     static const QStringList kNames = {
         QStringLiteral("VK_LAYER_PATH"), QStringLiteral("VK_ADD_LAYER_PATH"),
@@ -248,7 +220,6 @@ bool loads_code(const QString& name) {
            kNames.contains(name);
 }
 
-// NVIDIA's Vulkan driver manifest, where its packages install it.
 QString nvidia_vulkan_driver() {
     for (const char* path : {"/usr/share/vulkan/icd.d/nvidia_icd.x86_64.json",
                              "/usr/share/vulkan/icd.d/nvidia_icd.json",
@@ -258,8 +229,7 @@ QString nvidia_vulkan_driver() {
     return {};
 }
 
-// Whether the machine has an NVIDIA graphics card, as the kernel lists PCI
-// devices: vendor 0x10de, display class 0x03.
+// PCI vendor 0x10de, display class 0x03.
 bool has_nvidia_card() {
     const QDir devices(QStringLiteral("/sys/bus/pci/devices"));
     for (const QString& device : devices.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
@@ -273,9 +243,8 @@ bool has_nvidia_card() {
     return false;
 }
 
-// Roblox's own frame rate cap, in its settings file in the prefix: its menu
-// stops at 240, so with VSync off it is lifted to the value it reads as no
-// cap. Only an element already there is changed; Roblox writes the file.
+// Roblox's menu caps the frame rate at 240, so with VSync off its settings
+// file gets the value it reads as uncapped. Only an existing entry is changed.
 void lift_roblox_frame_cap() {
     const QDir users(stud::ui::client::prefix_dir() + QStringLiteral("/root/Users"));
     static const QRegularExpression cap(
@@ -299,9 +268,7 @@ void lift_roblox_frame_cap() {
     }
 }
 
-// The chosen GPU, for a laptop with two: NVIDIA's PRIME offload for their
-// driver, DRI_PRIME for Mesa. Both are the documented way and both are
-// ignored on a machine with one GPU.
+// The chosen GPU on a laptop with two: PRIME offload for NVIDIA, DRI_PRIME for Mesa.
 void apply_gpu_selection(QProcessEnvironment& env, const stud::config::StudSettings& settings) {
     const auto gpus = stud::ui::enumerate_gpus();
     const stud::ui::GpuInfo* chosen = nullptr;
@@ -313,8 +280,7 @@ void apply_gpu_selection(QProcessEnvironment& env, const stud::config::StudSetti
         env.insert(QStringLiteral("__NV_PRIME_RENDER_OFFLOAD"), QStringLiteral("1"));
         env.insert(QStringLiteral("__GLX_VENDOR_LIBRARY_NAME"), QStringLiteral("nvidia"));
         env.insert(QStringLiteral("__VK_LAYER_NV_optimus"), QStringLiteral("NVIDIA_only"));
-        // Only NVIDIA's Vulkan driver, so Mesa's are not loaded beside it, and
-        // its shader cache kept whole: a pipeline compiled once stays compiled.
+        // Only NVIDIA's ICD, so Mesa's aren't loaded too and its shader cache stays whole.
         if (const QString icd = nvidia_vulkan_driver(); !icd.isEmpty()) {
             env.insert(QStringLiteral("VK_DRIVER_FILES"), icd);
         }
@@ -326,33 +292,26 @@ void apply_gpu_selection(QProcessEnvironment& env, const stud::config::StudSetti
 }
 
 void apply_mangohud(QProcessEnvironment& env, bool enabled) {
-    // Undo what keep_mangohud_out_of_this_process() did: that was for Stud's
-    // own process.
+    // Undo keep_mangohud_out_of_this_process(), which was for Stud's own process.
     if (g_layers_disable_was_set) {
         env.insert(QStringLiteral("VK_LOADER_LAYERS_DISABLE"), g_host_layers_disable);
     } else {
         env.remove(QStringLiteral("VK_LOADER_LAYERS_DISABLE"));
     }
-    // MangoHud's picmip rewrites every sampler's LOD bias; -17 is its own
-    // "leave the sampler alone", so a config file made for another game does
-    // not change how Roblox's textures look. read_cfg keeps that file read.
+    // picmip -17 leaves sampler LOD bias alone, so a config made for another game
+    // doesn't change Roblox's textures.
     if (enabled || env.contains(QStringLiteral("MANGOHUD"))) {
         const QString existing = env.value(QStringLiteral("MANGOHUD_CONFIG"));
         env.insert(QStringLiteral("MANGOHUD_CONFIG"),
                    existing.isEmpty() ? QStringLiteral("read_cfg,picmip=-17")
                                       : existing + QStringLiteral(",picmip=-17"));
-        // MangoHud draws over every swapchain it sees, and Studio's panels and
-        // dialogs are windows of their own: only the main window gets one.
+        // Studio's panels are windows of their own; only the main one gets the overlay.
         env.insert(QStringLiteral("ROSEMARY_SWAPCHAIN_MAIN_WINDOW_ONLY"), QStringLiteral("1"));
     }
-    // The client presents with Vulkan, where MangoHud's implicit layer needs
-    // nothing more than this.
     if (enabled) env.insert(QStringLiteral("MANGOHUD"), QStringLiteral("1"));
 }
 
-// Stud's icon for `product`'s window, as a file Rosemary can read, written
-// beside Stud's other runtime files: the red stud for Roblox, the blue one for
-// Studio. Empty when it cannot be written.
+// Stud's window icon for `product` as a file Rosemary can read. Empty on failure.
 QString window_icon_file(stud::ui::client::Product product) {
     const bool studio = product == stud::ui::client::Product::Studio;
     const QString path = QString::fromStdString(stud::paths::runtime_dir()) +
@@ -364,12 +323,10 @@ QString window_icon_file(stud::ui::client::Product product) {
                : QString();
 }
 
-// Everything the client is started with.
 QProcessEnvironment client_environment(const stud::config::StudSettings& settings,
                                        stud::ui::client::Product product) {
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    // The variables Settings decides are Settings' alone; Rosemary's others
-    // (ROSEMARY_METAL_STATS and the like) pass through, for investigating.
+    // Settings owns these; Rosemary's other variables pass through for debugging.
     static const QStringList kFromSettings = {
         QStringLiteral("ROSEMARY_PREFIX"), QStringLiteral("ROSEMARY_PREFIX_SETUP"),
         QStringLiteral("ROSEMARY_DECORATIONS"), QStringLiteral("ROSEMARY_MENU"),
@@ -391,60 +348,44 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
     env.insert(QStringLiteral("ROSEMARY_PREFIX"), stud::ui::client::prefix_dir());
     env.insert(QStringLiteral("ROSEMARY_PREFIX_SETUP"), QStringLiteral("download"));
 
-    // The window: an application id of its own under Stud's, <id>.Player or
-    // <id>.Studio, whose hidden desktop entry gives the taskbar the red stud
-    // for Roblox and the blue one for Studio. A Flatpak's compositor accepts
-    // it, being an extension of the sandbox's own id.
+    // <id>.Player or <id>.Studio, whose hidden desktop entries give the taskbar
+    // the right icon. Flatpak accepts them as extensions of the sandbox id.
     const bool studio = product == stud::ui::client::Product::Studio;
     env.insert(QStringLiteral("SDL_APP_ID"),
                QStringLiteral(STUD_APP_ID) + (studio ? QStringLiteral(".Studio") : QStringLiteral(".Player")));
-    // The sound, in a mixer: Stud with Stud's icon. Plasma's applet leaves out
-    // a stream name with "audio" in it, so it reads just Stud; its settings
-    // page, "Stud: Roblox audio". On either of SDL's sound servers; Rosemary
-    // takes the name over the bundle's.
+    // Plasma's mixer drops stream names containing "audio", so it shows just Stud.
     env.insert(QStringLiteral("SDL_APP_NAME"), QStringLiteral("Stud"));
-    // An Intel Mac, which is what the client sees of the CPU: not a translated
-    // process on Apple silicon. Rosemary says Rosetta for Roblox's installer,
-    // which picks its download by it; Stud downloads the client itself.
+    // An Intel Mac, not Rosetta: Rosemary reports Rosetta for Roblox's installer,
+    // and Stud downloads the client itself.
     env.insert(QStringLiteral("ROSEMARY_PROC_TRANSLATED"), QStringLiteral("0"));
-    // Stud installs and updates the client; Roblox's own installer never runs
-    // in the prefix. Started by the client or its menu bar helper, it would
-    // download and unpack another build (a test channel's) over the one Stud
-    // checked. Rosemary refuses it, and the client sees its update fail.
+    // Stud installs the client; Roblox's installer would replace the checked
+    // build with another channel's, so Rosemary refuses to run it.
     env.insert(QStringLiteral("ROSEMARY_REFUSED_PROGRAMS"),
                QStringLiteral("RobloxPlayerInstaller:RobloxStudioInstaller"));
-    // A smaller render, and what scales it back up as it is presented. Metal
-    // only: an OpenGL surface stays the window's size whatever the guest is
-    // told, so it would draw into a corner of it.
+    // Metal only: an OpenGL surface stays window-sized and would draw into a corner.
     if (settings.render_scale < 100 && settings.renderer == "vulkan") {
         env.insert(QStringLiteral("ROSEMARY_RENDER_SCALE"), QString::number(settings.render_scale / 100.0));
         env.insert(QStringLiteral("ROSEMARY_UPSCALER"), QString::fromStdString(settings.upscaler));
     }
     env.insert(QStringLiteral("SDL_AUDIO_DEVICE_STREAM_NAME"), QStringLiteral("Roblox audio"));
-    // The mixer shows the app's own stud: the red for Roblox, the blue for
-    // Studio, the icons Stud's entry already installs for its two actions.
     env.insert(QStringLiteral("SDL_AUDIO_DEVICE_APP_ICON_NAME"),
                QStringLiteral(STUD_APP_ID) + (studio ? QStringLiteral("-studio") : QStringLiteral("-player")));
-    // Wayland wherever there is one. X11 through XWayland only when asked
-    // for, and only where XWayland is there to ask.
+    // Wayland when available; XWayland only when chosen in Settings.
     if (!env.value(QStringLiteral("WAYLAND_DISPLAY")).isEmpty()) {
         const bool xwayland = !env.value(QStringLiteral("DISPLAY")).isEmpty();
         env.insert(QStringLiteral("SDL_VIDEO_DRIVER"),
                    xwayland && settings.display_backend == "x11" ? QStringLiteral("x11")
                                                                  : QStringLiteral("wayland"));
     }
-    // Rosemary draws the macOS title bar itself ("client"), or leaves the
-    // window to the desktop's own ("server").
+    // "client": Rosemary draws the macOS title bar; "server": the desktop does.
     const bool native_title_bar = settings.title_bar == "native";
     env.insert(QStringLiteral("ROSEMARY_DECORATIONS"),
                native_title_bar ? QStringLiteral("server") : QStringLiteral("client"));
     env.insert(QStringLiteral("ROSEMARY_MENU"), settings.title_bar == "macos"
                                                     ? QStringLiteral("titlebar")
                                                     : QStringLiteral("none"));
-    // Stud's name and icon on the window, and no tray icons of the client's
-    // own beside Stud's (switches of Stud's Rosemary fork).
-    // Studio keeps its own titles: its windows are documents, named by what
-    // is open.
+    // Stud's name and icon, and no tray icons of the client's own. Studio keeps
+    // its titles, which name the open document.
     if (product == stud::ui::client::Product::Player) {
         env.insert(QStringLiteral("ROSEMARY_WINDOW_TITLE"), QStringLiteral("Stud"));
     }
@@ -452,7 +393,6 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
         env.insert(QStringLiteral("ROSEMARY_WINDOW_ICON"), icon);
     }
     env.insert(QStringLiteral("ROSEMARY_STATUS_ITEMS"), QStringLiteral("0"));
-    // The window opens as it was left: its size, and maximized or fullscreen.
     {
         const QString state = QString::fromStdString(stud::paths::state_dir());
         QDir().mkpath(state);
@@ -460,17 +400,14 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
                    state + (product == stud::ui::client::Product::Studio ? QStringLiteral("/window-studio")
                                                                          : QStringLiteral("/window")));
     }
-    // The client's web views are QtWebEngine pages drawn inside its own
-    // window: Rosemary starts this program again as the web view helper, in
-    // a compositor of its own. STUD_WEBVIEW_WINDOWS=1 shows them as windows of
-    // this process on the desktop instead, as before.
+    // Web views draw inside the client window through the web view helper.
+    // STUD_WEBVIEW_WINDOWS=1 shows them as separate windows instead.
     if (env.value(QStringLiteral("STUD_WEBVIEW_WINDOWS")) == QLatin1String("1")) {
         if (const QString socket = stud::ui::webview::listen(); !socket.isEmpty()) {
             env.insert(QStringLiteral("STUD_WEBVIEW_SOCKET"), socket);
         }
     } else {
-        // In the AppImage, its launcher: the bare binary finds none of the
-        // libraries the AppImage carries.
+        // In the AppImage, the bare binary can't find its bundled libraries.
         const QString appdir = qEnvironmentVariable("APPDIR");
         const QString launcher = appdir + QStringLiteral("/bin/stud");
         env.insert(QStringLiteral("STUD_WEBVIEW_HELPER"),
@@ -483,21 +420,16 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
                    QString::number(settings.background_fps));
     }
 
-    // Ctrl where the macOS client expects Command, which Linux desktops keep
-    // for themselves. The Player only for copy, cut, paste and select-all, so
-    // Ctrl stays Ctrl in games; Studio in every shortcut, as Studio on Windows
-    // has it (Ctrl+S saves, Ctrl+1 to 4 pick tools, Ctrl-click adds to a
-    // selection), with Super taking Control's place.
+    // Ctrl for Command. The Player only for clipboard shortcuts, so games keep
+    // Ctrl; Studio for every shortcut, as on Windows, with Super for Control.
     if (product == stud::ui::client::Product::Studio) {
         env.insert(QStringLiteral("ROSEMARY_COMMAND_KEY"), QStringLiteral("ctrl"));
     } else {
         env.insert(QStringLiteral("ROSEMARY_CONTROL_EDIT_KEYS"), QStringLiteral("1"));
     }
 
-    // Presentation: on Vulkan the presentation mode, on OpenGL the swap
-    // interval (mailbox has no OpenGL equivalent, and is immediate there).
-    // Not waiting for the display means uncapped: the client paces itself to
-    // the refresh rate it is told, so it is told one no display has.
+    // VSync off means uncapped: the client paces itself to the refresh rate it
+    // is told, so it gets one no display has. OpenGL has no mailbox mode.
     if (!stud::config::waits_for_refresh(settings)) {
         env.insert(QStringLiteral("ROSEMARY_SCREEN_REFRESH_RATE"), QStringLiteral("9999"));
     }
@@ -516,7 +448,7 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
 
     apply_gpu_selection(env, settings);
     apply_mangohud(env, settings.mangohud);
-    // Settings' own variables, last, so each wins over Stud's.
+    // Last, so Settings' own variables win.
     for (const QString& line : QString::fromStdString(settings.environment).split(QLatin1Char('\n'))) {
         const QString entry = line.trimmed();
         const qsizetype equals = entry.indexOf(QLatin1Char('='));
@@ -526,13 +458,10 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
     return env;
 }
 
-// The FastFlags of Settings' FFlags tab (flags.json), written as the
-// client's ClientAppSettings.json. A malformed flags.json is reported and
-// left out rather than stopping the launch.
+// flags.json as ClientAppSettings.json. A malformed file is reported and skipped.
 QJsonObject client_flags(const stud::config::StudSettings& settings,
                          stud::ui::client::Product product = stud::ui::client::Product::Player) {
     QJsonObject flags;
-    // The Player's from the FFlags tab, Studio's from the Studio tab.
     QFile file(QString::fromStdString(product == stud::ui::client::Product::Studio
                                           ? stud::config::default_studio_flags_path()
                                           : stud::config::default_flag_overrides_path()));
@@ -541,12 +470,11 @@ QJsonObject client_flags(const stud::config::StudSettings& settings,
         const QJsonDocument doc = QJsonDocument::fromJson(text);
         if (doc.isObject()) {
             flags = doc.object();
-        } else if (!text.trimmed().isEmpty()) {  // an empty file is no flags
+        } else if (!text.trimmed().isEmpty()) {
             std::fprintf(stderr, "stud: %s is not a JSON object; its flags are not used\n",
                          qPrintable(file.fileName()));
         }
     }
-    // The renderer is Settings' choice, over anything flags.json says about it.
     flags.remove(QStringLiteral("FFlagDebugGraphicsPreferOpenGL"));
     if (settings.renderer == "opengl") {
         flags.insert(QStringLiteral("FFlagDebugGraphicsPreferOpenGL"), true);
@@ -554,19 +482,16 @@ QJsonObject client_flags(const stud::config::StudSettings& settings,
     return flags;
 }
 
-// GameMode raises the CPU governor through a helper polkit lets only members
-// of the "gamemode" group run. Without that, GameMode still says it is on and
-// the CPU stays in its power-saving profile: on a laptop that halved Roblox's
-// frame rate. Ask polkit, without prompting, whether this user may run the
-// helper, and say so once per run if not.
+// GameMode raises the CPU governor through a helper only the "gamemode" group
+// may run; otherwise it claims to be on while the CPU stays in power-saving
+// mode (half the frame rate on a laptop). Warn once if polkit says no.
 void warn_if_gamemode_cannot_raise_cpu() {
     static bool warned = false;
     if (warned) return;
     auto* check = new QProcess(qApp);
     QObject::connect(check, &QProcess::finished, check, [check](int code, QProcess::ExitStatus status) {
         check->deleteLater();
-        // pkcheck: 0 authorized, 1 not authorized, 2 authorization needs a
-        // password. Anything else, or a crash, says nothing about GameMode.
+        // pkcheck: 0 authorized, 1 not, 2 needs a password.
         if (status != QProcess::NormalExit || (code != 1 && code != 2) || warned) return;
         warned = true;
         std::printf("stud: GameMode cannot change the CPU governor (not in the gamemode group)\n");
@@ -577,7 +502,6 @@ void warn_if_gamemode_cannot_raise_cpu() {
                            "then log out and back in."));
     });
     QObject::connect(check, &QProcess::errorOccurred, check, [check](QProcess::ProcessError error) {
-        // No pkcheck: no polkit to ask, and nothing to warn about.
         if (error == QProcess::FailedToStart) check->deleteLater();
     });
     check->start(QStringLiteral("pkcheck"),
@@ -586,12 +510,9 @@ void warn_if_gamemode_cannot_raise_cpu() {
                   QStringLiteral("--process"), QString::number(QCoreApplication::applicationPid())});
 }
 
-// GameMode as the Flatpak sandbox reaches it: through the desktop portal,
-// which needs no permission and hands the request to GameMode on the host.
-// Calling GameMode's own name from inside the sandbox fails (ServiceUnknown),
-// and the session went without it. The process is named by pidfds, which
-// stay right across the sandbox's pid namespace; RegisterGame with a bare pid
-// only where pidfds are unavailable.
+// GameMode inside Flatpak goes through the desktop portal; GameMode's own bus
+// name isn't reachable from the sandbox. pidfds survive the PID namespace;
+// a bare pid is the fallback.
 QDBusReply<int> register_through_portal(qint64 pid) {
     QDBusInterface portal("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
                           "org.freedesktop.portal.GameMode", QDBusConnection::sessionBus());
@@ -599,7 +520,6 @@ QDBusReply<int> register_through_portal(qint64 pid) {
     const int self = static_cast<int>(::syscall(SYS_pidfd_open, ::getpid(), 0));
     QDBusReply<int> reply;
     if (target >= 0 && self >= 0) {
-        // QDBusUnixFileDescriptor keeps a duplicate, so these are closed here.
         reply = portal.call("RegisterGameByPIDFd", QVariant::fromValue(QDBusUnixFileDescriptor(target)),
                             QVariant::fromValue(QDBusUnixFileDescriptor(self)));
     } else {
@@ -610,13 +530,8 @@ QDBusReply<int> register_through_portal(qint64 pid) {
     return reply;
 }
 
-// The client's main thread, raised as far as RealtimeKit lets a user process:
-// it runs Roblox's frame and sets the frame rate, while the same process's
-// workers and Rosemary's own threads would otherwise get an equal share of a
-// busy core. RealtimeKit (on the system bus), or in the Flatpak the desktop
-// portal's Realtime interface, does it without root; the level is the one
-// they report, MinNiceLevel. The main thread is the process's first, so its
-// thread id is the process id.
+// Raise the client's main thread (Roblox's frame loop) as far as RealtimeKit,
+// or the portal's Realtime interface in Flatpak, allows. Its thread id is the pid.
 void raise_main_thread_priority(qint64 pid) {
     const bool sandboxed = QFileInfo::exists(QStringLiteral("/.flatpak-info"));
     QDBusInterface realtime(
@@ -640,11 +555,10 @@ void raise_main_thread_priority(qint64 pid) {
     }
 }
 
-// What the kernel offers this account to draw with.
 struct KernelGpu {
-    bool usable = false;  // a render node it can open, or NVIDIA's own device
-    QString blocked;      // otherwise, a render node it cannot open
-    QString group;        // and the group that owns it
+    bool usable = false;  // a render node it can open, or NVIDIA's device
+    QString blocked;  // otherwise, the render node it can't open
+    QString group;
 };
 
 KernelGpu kernel_gpu() {
@@ -673,7 +587,6 @@ KernelGpu kernel_gpu() {
     return gpu;
 }
 
-// What to tell someone whose account cannot open the GPU it has.
 QString no_gpu_access_reason(const KernelGpu& gpu) {
     QString reason = QStringLiteral("Roblox needs the graphics card at %1, and your account cannot open it")
                          .arg(gpu.blocked);
@@ -689,12 +602,11 @@ QString no_gpu_access_reason(const KernelGpu& gpu) {
     return reason + QStringLiteral(", and start Stud again.");
 }
 
-// What to tell someone whose system has no GPU for Roblox to draw with.
 QString no_gpu_reason() {
     QString reason = QStringLiteral(
         "Roblox needs a graphics card, and this Linux system has none it can use: Vulkan finds no "
         "device, and there is nothing in /dev/dri. Without one, Roblox only shows an empty window.");
-    // ChromeOS's Linux container, which gets the GPU only when asked to.
+    // ChromeOS's Linux container gets the GPU only when enabled.
     if (QFileInfo::exists(QStringLiteral("/opt/google/cros-containers"))) {
         reason += QStringLiteral(
             "\n\nOn a Chromebook, turn on GPU acceleration for Linux: open "
@@ -708,7 +620,6 @@ QString no_gpu_reason() {
     return reason;
 }
 
-// Hands the client to Feral GameMode, which lets go when it exits.
 void register_with_gamemode(qint64 pid) {
     const bool sandboxed = QFileInfo::exists(QStringLiteral("/.flatpak-info"));
     QDBusReply<int> reply;
@@ -726,14 +637,12 @@ void register_with_gamemode(qint64 pid) {
         std::printf("stud: GameMode refused the session (%d)\n", reply.value());
     } else {
         std::printf("stud: GameMode is on for this session%s\n", sandboxed ? " (through the portal)" : "");
-        // Polkit is the host's: pkcheck cannot ask it from inside the sandbox.
+        // pkcheck can't reach the host's polkit from the sandbox.
         if (!sandboxed) warn_if_gamemode_cannot_raise_cpu();
     }
 }
 
-// One log file per session under ~/.local/state/stud/logs, holding this
-// process's output and the client's (it inherits the teed stdout). The last
-// ten sessions are kept.
+// One log per session under ~/.local/state/stud/logs; the last ten are kept.
 void start_session_log() {
     if (!qEnvironmentVariable("STUD_LOG_FILE").isEmpty()) return;
     QDir log_dir(QString::fromStdString(stud::paths::log_dir()));
@@ -760,9 +669,7 @@ void open_settings_for_launch_failure(const QString& reason) {
 
 std::vector<pid_t> client_process_ids();
 
-// Hands `link` to the running client of `product`: Rosemary gives a URL
-// named with the bundle to the instance already open, as macOS does. False
-// when there is no client to hand it to.
+// Hands `link` to the running client, as macOS would. False when none is running.
 bool hand_link_to_client(stud::ui::client::Product product, const QString& link,
                          const stud::config::StudSettings& settings) {
     const auto build = stud::ui::client::installed(product);
@@ -770,8 +677,7 @@ bool hand_link_to_client(stud::ui::client::Product product, const QString& link,
     if (!build || rosemary.isEmpty()) return false;
     QProcess handoff;
     handoff.setProgram(rosemary);
-    // A place file goes as a file:// URL, which Rosemary delivers as a
-    // document to open.
+    // A place file goes as a file:// URL, which Rosemary opens as a document.
     handoff.setArguments({QStringLiteral("run"), build->app,
                           link.startsWith(QLatin1Char('/')) ? QUrl::fromLocalFile(link).toString() : link});
     handoff.setProcessEnvironment(client_environment(settings, product));
@@ -780,8 +686,6 @@ bool hand_link_to_client(stud::ui::client::Product product, const QString& link,
     return handoff.startDetached();
 }
 
-// Deletes files older than `days` from Roblox's logs and caches in the
-// prefix and from Stud's own logs.
 void clean_old_files(int days) {
     if (days <= 0) return;
     const QDateTime before = QDateTime::currentDateTime().addDays(-days);
@@ -803,9 +707,7 @@ void clean_old_files(int days) {
     if (removed > 0) std::printf("stud: cleaner removed %d old file(s)\n", removed);
 }
 
-// A place file (.rbxl, .rbxlx) opened from the file manager, as a path or a
-// file:// URL, as the path Studio's guest sees it by. Nothing for anything
-// else.
+// A .rbxl/.rbxlx path or file:// URL, as the path Studio's guest sees it.
 std::optional<QString> place_file(const char* argument) {
     const QString given = QString::fromLocal8Bit(argument);
     const QFileInfo info(given.startsWith(QLatin1String("file:")) ? QUrl(given).toLocalFile() : given);
@@ -816,9 +718,8 @@ std::optional<QString> place_file(const char* argument) {
     return QStringLiteral("/Volumes/Host") + info.absoluteFilePath();
 }
 
-// In a Flatpak whose permissions were taken away (Flatseal, flatpak
-// override), names what is missing and the command that grants it back,
-// which runs on the host: nothing inside the sandbox can widen it.
+// Names Flatpak permissions that were removed and the host command that restores
+// them; the sandbox can't widen itself.
 void check_flatpak_permissions() {
     QFile info(QStringLiteral("/.flatpak-info"));
     if (!info.open(QIODevice::ReadOnly)) return;
@@ -838,8 +739,7 @@ void check_flatpak_permissions() {
     if (box.clickedButton() == copy) QGuiApplication::clipboard()->setText(command);
 }
 
-// Starts the client. False when it could not start; the reason has been put
-// on screen.
+// False when the client couldn't start; the reason has been shown.
 bool launch_game(stud::ui::client::Product product, const std::optional<QString>& deep_link) {
     g_product = product;
     const bool player = product == stud::ui::client::Product::Player;
@@ -851,8 +751,6 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     }
     settings.gpu.device_index = stud::ui::chosen_gpu_index(settings.gpu);
 
-    // A link while Stud runs (a game clicked on roblox.com, Studio's sign-in
-    // coming back) goes to the client already open.
     if (deep_link && another_instance_is_running() && hand_link_to_client(product, *deep_link, settings)) {
         QMetaObject::invokeMethod(qApp, &QApplication::quit, Qt::QueuedConnection);
         return false;
@@ -867,9 +765,8 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     start_session_log();
     stud::ui::write_diagnostics();
 
-    // Roblox draws on the GPU. With no Vulkan device its Metal renderer cannot
-    // start; with no GPU at all, Mesa's software fallback cannot compile
-    // Roblox's shaders, and its window stays empty with nothing to say why.
+    // With no Vulkan device Roblox's Metal renderer can't start, and Mesa's
+    // software fallback can't compile its shaders, leaving an empty window.
     if (stud::ui::enumerate_gpus().empty()) {
         if (const KernelGpu gpu = kernel_gpu(); !gpu.usable) {
             open_settings_for_launch_failure(gpu.blocked.isEmpty() ? no_gpu_reason() : no_gpu_access_reason(gpu));
@@ -881,10 +778,7 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
         }
     }
 
-    // Cancel stops opening Stud.
     stud::ui::show_loading_lines([]() {
-        // Stops a download, unpacking or prefix setup under way, and clears
-        // what it left.
         stud::ui::client::cancel();
         stud::ui::terminate_stud_session();
         QMetaObject::invokeMethod(qApp, &QApplication::quit, Qt::QueuedConnection);
@@ -913,8 +807,7 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
         open_settings_for_launch_failure(error);
         return false;
     }
-    // The cubes' stud comes from the installed Player: a new one means
-    // every cube on screen takes it again.
+    // The loading cubes use the installed Player's stud texture.
     const auto has = stud::ui::client::installed(stud::ui::client::Product::Player);
     if (has && (!had || had->upload != has->upload)) cube_gl_client_changed();
     if (!stud::ui::client::ensure_prefix(rosemary, progress, &error)) {
@@ -934,23 +827,19 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
             QStringLiteral("Roblox runs on another GPU until NVIDIA's Vulkan driver is installed."));
     }
     clean_old_files(settings.cleaner_days);
-    // Customizations, over a build put back as it came.
     if (!stud::ui::customization::apply(*build, product, &error)) {
         std::fprintf(stderr, "stud: customizations were not applied: %s\n", qPrintable(error));
     }
-    // A changed set of customizations is on trial until this run ends.
+    // New customizations are on trial until this run ends (crash guard).
     stud::ui::customization::begin_run(product);
-    // The FFlags tab's flags are the player's.
     if (!stud::ui::client::write_app_settings(*build, client_flags(settings, product), &error)) {
         std::fprintf(stderr, "stud: %s\n", qPrintable(error));
     }
     if (stud::ui::loading_cancelled()) return false;
     stud::ui::clear_loading_text();
 
-    // The executable, not the bundle: Rosemary opens a bundle the way
-    // LaunchServices does, under its own services and handed to any instance
-    // it believes is running, while an executable runs here, as this
-    // process's child, so its exit is Roblox's.
+    // The executable, not the bundle: a bundle would be opened by Rosemary's
+    // services instead of as this process's child, so we'd lose its exit.
     const QString program = stud::ui::client::executable(*build);
     if (program.isEmpty()) {
         open_settings_for_launch_failure(
@@ -959,9 +848,8 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     }
     QStringList args{QStringLiteral("run"), program};
     if (deep_link && player) args << QStringLiteral("-protocolString") << *deep_link;
-    // A place file as the task Studio gives the process that edits one: given
-    // as a document instead, the Studio started opens a second one for it and
-    // stays on its start page beside it.
+    // As Studio's edit task: opened as a document, a second Studio would start
+    // beside it on the start page.
     if (deep_link && !player && deep_link->startsWith(QLatin1Char('/'))) {
         args << QStringLiteral("-task") << QStringLiteral("EditFile") << QStringLiteral("-localPlaceFile")
              << *deep_link;
@@ -983,7 +871,6 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     activity.history_servers = settings.record_server_history;
     g_activity = new stud::ui::GameActivity(activity, qApp);
     g_client = new QProcess(qApp);
-    // Through the wrapper Settings names, if any: it runs Rosemary in turn.
     QStringList wrapper = QProcess::splitCommand(QString::fromStdString(settings.launch_wrapper));
     if (wrapper.isEmpty()) {
         g_client->setProgram(rosemary);
@@ -995,13 +882,10 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     }
     g_client->setProcessEnvironment(client_environment(settings, product));
     g_client->setStandardInputFile(QProcess::nullDevice());
-    // Through this process, scrubbed, into the session log and terminal.
     if (deep_link) g_deep_link = deep_link->toUtf8();
     g_client->setProcessChannelMode(QProcess::ForwardedChannels);
-    // The client on the machine's fastest cores, where it has more than one
-    // kind: on a Mac its main thread's priority keeps it on a fast core, and
-    // here the scheduler would as soon run it on an efficiency core. Set up
-    // before the fork; the child only hands it to the kernel.
+    // On machines with mixed cores, the client goes on the fastest ones; the
+    // scheduler would otherwise use efficiency cores. Prepared before the fork.
     const std::vector<int> fastest = stud::ui::cpu::fastest();
     cpu_set_t cores;
     CPU_ZERO(&cores);
@@ -1019,8 +903,6 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
         if (restrict) ::sched_setaffinity(0, sizeof(cores), &cores);
     });
     QObject::connect(g_client, &QProcess::finished, qApp, [product](int code, QProcess::ExitStatus status) {
-        // The Player gone before its app started closed without its window
-        // ever showing, whatever code it gave.
         const bool never_started = product == stud::ui::client::Product::Player &&
                                    !g_client_app_started.load(std::memory_order_relaxed);
         const bool crashed =
@@ -1030,7 +912,6 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
         }
         std::printf("stud: Roblox exited (%s %d)\n",
                     status == QProcess::CrashExit ? "signal" : "code", code);
-        // Closed or crashed in a game: that game is history too.
         if (g_activity != nullptr) g_activity->left();
         const QStringList set_aside = stud::ui::customization::end_run(product, crashed);
         if (!set_aside.isEmpty()) {
@@ -1055,8 +936,7 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
                 qPrintable(build->upload), deep_link ? " with a deep link" : "");
     std::fflush(stdout);
     g_client->start();
-    // The client holds the pipe's write end now; with this copy closed, the
-    // reader sees the end of its output when it and its children are gone.
+    // Close our copy so the reader sees EOF when the client and its children exit.
     if (g_output_write >= 0) {
         ::close(g_output_write);
         g_output_write = -1;
@@ -1070,20 +950,15 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     if (QProcess::splitCommand(QString::fromStdString(settings.launch_wrapper)).isEmpty()) {
         raise_main_thread_priority(g_client->processId());
     } else {
-        // The process started is the wrapper, not Roblox: its first thread is
-        // not the client's main thread.
+        // The started process is the wrapper, not the client's main thread.
         std::printf("stud: Roblox starts through a wrapper; its main thread keeps its priority\n");
     }
-    // The client puts up its own window within seconds; the loading screen has
-    // done its part.
     QTimer::singleShot(3000, qApp, [] { stud::ui::close_loading_screen(); });
     return true;
 }
 
-// Every Rosemary process of Stud's prefix, found through /proc: an executable
-// named rosemary started with Stud's ROSEMARY_PREFIX. That is the client and
-// what runs beside it, and the prefix's own services, launchd, its daemons and
-// the process server, none of which name the client in their arguments.
+// Every Rosemary process of Stud's prefix (rosemary with Stud's ROSEMARY_PREFIX):
+// the client plus launchd, daemons and the process server.
 std::vector<pid_t> client_process_ids() {
     std::vector<pid_t> pids;
     const std::string prefix = "ROSEMARY_PREFIX=" + stud::ui::client::prefix_dir().toStdString();
@@ -1112,11 +987,8 @@ namespace stud::ui {
 void terminate_stud_session() {
     if (g_client == nullptr) return;
     g_stop_requested = true;
-    // `rosemary run` only asks Rosemary's own services to open the app; the
-    // client itself runs under them, not under this process, and the services
-    // outlive it and would serve the next session from this one's state. So
-    // the prefix's process server is told to end everything it runs, and every
-    // process of the prefix is stopped with the one this process started.
+    // Rosemary's services outlive the client and would serve the next session
+    // stale state, so every process of the prefix is stopped with it.
     std::vector<pid_t> pids = client_process_ids();
     QProcess stop;
     stop.setProgram(g_client->program());
@@ -1134,8 +1006,7 @@ void terminate_stud_session() {
            (g_client->state() != QProcess::NotRunning || !all_gone())) {
         g_client->waitForFinished(100);
     }
-    // Looked up again: a process that ended in the wait may have left its
-    // number to one that is not Stud's.
+    // Looked up again: a pid may have been reused while we waited.
     for (const pid_t pid : client_process_ids()) ::kill(pid, SIGKILL);
     if (g_client->state() != QProcess::NotRunning) {
         g_client->kill();
@@ -1158,8 +1029,6 @@ bool crash_dialog_is_open() { return g_crash_dialog_open; }
 
 bool session_ended_cleanly() { return g_session_end != SessionEnd::Crashed; }
 
-// Starts Stud again as a new process and lets this one go, which is what
-// closing and reopening it does.
 void relaunch_stud() {
     hold_for_relaunch();
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
@@ -1169,13 +1038,12 @@ void relaunch_stud() {
     } else if (::getenv("MANGOHUD") != nullptr || ::getenv("MANGOHUD_CONFIG") != nullptr) {
         env.remove(QStringLiteral("VK_LOADER_LAYERS_DISABLE"));
     }
-    // The AppImage file itself, not the mount this process runs from.
+    // The AppImage file, not this process's mount.
     const QString appimage = qEnvironmentVariable("APPIMAGE");
     const QString program = !appimage.isEmpty() && QFileInfo::exists(appimage)
                                 ? QFileInfo(appimage).absoluteFilePath()
                                 : QCoreApplication::applicationFilePath();
     QObject::connect(qApp, &QCoreApplication::aboutToQuit, qApp, [program, env]() {
-        // The lock goes with this process; the new one takes it.
         if (g_lock_fd >= 0) {
             ::close(g_lock_fd);
             g_lock_fd = -1;
@@ -1199,10 +1067,8 @@ void relaunch_stud() {
     QApplication::quit();
 }
 
-// "Oops, Stud has crashed!", with a way to keep the log that says why.
 void show_crash_dialog(const QString& which_process) {
     const QString log = QString::fromUtf8(qgetenv("STUD_LOG_FILE"));
-    // A dialog that is this process's last window must not quit it on its own.
     qApp->setQuitOnLastWindowClosed(false);
     g_crash_dialog_open = true;
 
@@ -1254,29 +1120,25 @@ void show_crash_dialog(const QString& which_process) {
 int main(int argc, char** argv) {
     keep_mangohud_out_of_this_process();
 
-    // No window waits for the compositor's go-ahead to draw its next frame.
-    // A covered window gets none on Wayland, and every frame it drew then
-    // held the whole interface thread for Qt's timeout: Settings over the
-    // welcome page froze. The animations pace themselves instead.
+    // Don't block on the compositor's frame callback: Wayland sends none to a
+    // covered window, which froze the interface thread (Settings over the
+    // welcome page).
     QSurfaceFormat format = QSurfaceFormat::defaultFormat();
     format.setSwapInterval(0);
     QSurfaceFormat::setDefaultFormat(format);
-    // QtWebEngine shares its GL contexts with the widgets that show pages.
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
-    // Rosemary starting the web view helper for the client it runs.
     if (argc > 1 && std::string(argv[1]) == "--webview-helper") {
         return stud::ui::webview::run_helper(argc, argv);
     }
 
     QApplication app(argc, argv);
     app.setWindowIcon(QIcon(":/stud-logo-color.png"));
-    // Wayland finds a window's icon through its app_id and a matching desktop
-    // entry; the client reports the same id (SDL_APP_ID).
+    // Wayland finds the icon through app_id; the client reports the same id.
     QGuiApplication::setDesktopFileName(QStringLiteral(STUD_APP_ID));
     QCoreApplication::setApplicationName(QStringLiteral("Stud"));
 
-    // Stud 1.x's Android engine, APK and caches, gone at the first 2.0 start;
-    // its settings, FFlags, customizations and logs are read where they are.
+    // Remove Stud 1.x's Android engine, APK and caches; its settings, flags,
+    // customizations and logs stay.
     {
         const auto removed = stud::ui::stud1::remove_remnants(
             QString::fromStdString(stud::paths::data_dir()),
@@ -1294,8 +1156,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Registers this AppImage (or build) in the user's own ~/.local/share,
-    // which gives the windows an icon and makes roblox:// links open Stud.
     if (argc > 1 && std::string(argv[1]) == "--install-desktop-entry") {
         return stud::ui::install_desktop_entry();
     }
@@ -1312,8 +1172,7 @@ int main(int argc, char** argv) {
 
     check_flatpak_permissions();
 
-    // Settings, from the desktop entry's action or the tray. A running Stud
-    // owns the window; this hands the request over.
+    // A running Stud owns the Settings window; this hands the request over.
     if (argc > 1 && std::string(argv[1]) == "--settings") {
         if (stud::ui::SettingsWindow::handOffToRunningInstance()) return 0;
         stud::ui::SettingsWindow::listenForOpenRequests();
@@ -1321,17 +1180,14 @@ int main(int argc, char** argv) {
         return app.exec();
     }
 
-    // A deep link, passed to the client as it came. Only its key names and
-    // sizes are logged: the game info is a single-use join ticket. Started on
-    // its own, Stud asks whether to open Roblox or Roblox Studio; --roblox
-    // and --studio answer that up front.
+    // Only the link's key names and sizes are logged: it holds a join ticket.
+    // --roblox and --studio skip the welcome page's choice.
     std::optional<QString> deep_link;
     std::optional<stud::ui::client::Product> product;
     if (argc > 1 && std::string(argv[1]) == "--roblox") product = stud::ui::client::Product::Player;
     if (argc > 1 && std::string(argv[1]) == "--studio") product = stud::ui::client::Product::Studio;
     const std::optional<QString> place = argc > 1 ? place_file(argv[1]) : std::nullopt;
     if (place) {
-        // Studio opens it, the way a Mac opens a document it was given.
         product = stud::ui::client::Product::Studio;
         deep_link = place;
         std::printf("stud: opening a place file in Studio\n");
@@ -1368,8 +1224,7 @@ int main(int argc, char** argv) {
         product = directly ? std::optional(stud::ui::client::Product::Player) : stud::ui::choose_product();
     }
     if (!product) {
-        // Closed without a choice. Settings opened from it stays until it
-        // is closed too, with whatever it holds unsaved.
+        // Closed without a choice. An open Settings stays until it is closed.
         const QWidgetList windows = QApplication::topLevelWidgets();
         if (std::any_of(windows.begin(), windows.end(), [](const QWidget* w) { return w->isVisible(); })) {
             return app.exec();
@@ -1378,7 +1233,6 @@ int main(int argc, char** argv) {
     }
 
     if (!launch_game(*product, deep_link)) {
-        // Settings saying why keeps Stud open; with nothing on screen, quit.
         const QWidgetList windows = QApplication::topLevelWidgets();
         if (std::none_of(windows.begin(), windows.end(),
                          [](const QWidget* w) { return w->isVisible(); })) {
@@ -1387,9 +1241,7 @@ int main(int argc, char** argv) {
         return app.exec();
     }
 
-    // This process stays for the session: it is the client's parent and the
-    // one able to report a crash. With a tray it also offers Settings and
-    // Exit; closing Roblox ends the session either way.
+    // This process stays as the client's parent so it can report a crash.
     stud::ui::SettingsWindow::listenForOpenRequests();
     if (tray_wanted) {
         auto* tray = new stud::ui::Tray(qApp);
@@ -1399,8 +1251,6 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "stud: no system tray available\n");
         }
     }
-    // Windows come and go (Settings, a dialog) while Roblox runs; only the
-    // client's exit ends Stud.
     app.setQuitOnLastWindowClosed(false);
     return app.exec();
 }

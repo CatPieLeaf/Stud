@@ -73,8 +73,7 @@ StudSettings load_settings(const std::string& path) {
         }
     }
 
-    // A key with the wrong type is an error, said out loud; a missing key
-    // keeps its default.
+    // A wrongly typed key is an error; a missing one keeps its default.
     const auto read_bool = [&](const char* key, bool& out) {
         if (!doc.contains(key)) return;
         if (!doc.at(key).is_boolean()) {
@@ -106,10 +105,8 @@ StudSettings load_settings(const std::string& path) {
                             "\" \"" + value + "\"");
     };
 
-    // Stud 1.x's names for the two settings that carried over to 2.0: its
-    // graphics mode is the renderer, and its upscaler choice the filter. Taken
-    // only where the file has no 2.0 value of its own, and only a value 2.0
-    // knows; the next save drops the old keys.
+    // Stud 1.x's names for the two settings 2.0 kept, read only when the 2.0 key is
+    // missing; the next save drops them.
     if (!doc.contains("renderer") && doc.contains("graphicsMode") && doc.at("graphicsMode").is_string()) {
         const std::string mode = doc.at("graphicsMode").get<std::string>();
         if (mode == "vulkan" || mode == "opengl") doc["renderer"] = mode;
@@ -121,7 +118,7 @@ StudSettings load_settings(const std::string& path) {
         }
     }
     read_string("renderer", result.renderer, {"vulkan", "opengl"});
-    // Before 2.0.2, VSync was on or off; off was Rosemary's mailbox.
+    // Before 2.0.2, VSync was a bool; off meant mailbox.
     if (!doc.contains("presentation") && doc.contains("vsync")) {
         bool vsync = true;
         read_bool("vsync", vsync);
@@ -136,7 +133,6 @@ StudSettings load_settings(const std::string& path) {
         }
         result.render_scale = value.get<int>();
     }
-    // The names a build before these were the two of Stud 1.x wrote.
     if (doc.contains("upscaler") && doc.at("upscaler").is_string()) {
         const std::string old = doc.at("upscaler").get<std::string>();
         if (old == "ravu" || old == "linear") doc["upscaler"] = "ravu-ar";
@@ -149,8 +145,7 @@ StudSettings load_settings(const std::string& path) {
         if (!doc.at("backgroundFps").is_number_integer()) {
             throw SettingsError("stud: config '" + path + "' has a non-integer \"backgroundFps\"");
         }
-        // 0 means no limit, and so does anything past the top of the range,
-        // including the 241 older builds wrote.
+        // 0 or anything past the range (older builds wrote 241) means no limit.
         const int value = doc.at("backgroundFps").get<int>();
         result.background_fps =
             (value <= 0 || value > kBackgroundFpsUnlimited) ? kBackgroundFpsNoLimit : value;
@@ -180,10 +175,7 @@ StudSettings load_settings(const std::string& path) {
 void save_settings(const std::string& path, const StudSettings& settings) {
     nlohmann::json doc = nlohmann::json::object();
 
-    // Preserve any other top-level keys already in the file; this file is
-    // shared, not exclusively owned by this module. A missing or
-    // malformed existing file is not fatal here, start fresh rather
-    // than blocking a save on an unrelated pre-existing problem.
+    // Keep the file's other keys; a missing or malformed file starts fresh.
     {
         std::ifstream existing(path);
         if (existing.is_open()) {
@@ -194,8 +186,6 @@ void save_settings(const std::string& path, const StudSettings& settings) {
                     doc = existing_doc;
                 }
             } catch (const nlohmann::json::parse_error&) {
-                // Fall through with a fresh object, an unrelated
-                // malformed file shouldn't block saving real settings.
             }
         }
     }
@@ -223,10 +213,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc["gamemode"] = settings.gamemode;
     doc["systemTray"] = settings.system_tray;
     doc["openPlayerDirectly"] = settings.open_player_directly;
-    // Settings Stud no longer has: Stud 1.x's Android engine's, and ones 2.0
-    // dropped.
-    // Erased rather than kept, so the file never lists something that does
-    // nothing.
+    // Settings Stud no longer has (1.x's engine and some 2.0 ones), so the file only lists live ones.
     for (const char* gone :
          {"hidpi", "followDpi", "renderScale", "upscaling", "upscaleOutputPercent",
           "upscaleQualityPercent", "upscaleTargetPercent", "upscalerChoice",
@@ -239,9 +226,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
 
     make_directories(parent_directory(path));
 
-    // Written beside it and renamed over it: truncating the real file
-    // first left it empty or half-written after a crash or a full disk,
-    // and the next launch then read it as malformed and ran on defaults.
+    // Written beside and renamed over, so a crash or full disk can't leave it half-written.
     const std::string temp = path + ".new";
     {
         std::ofstream out(temp);

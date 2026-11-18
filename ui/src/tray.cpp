@@ -10,8 +10,7 @@
 
 #include "stud/stud_paths.h"
 
-// Ends a running session, defined in main.cpp, declared here because
-// the tray is the only other caller.
+// Defined in main.cpp.
 namespace stud::ui { void terminate_stud_session(); }
 #include "update_check.h"
 
@@ -55,21 +54,9 @@ namespace stud::ui {
 
 namespace {
 
-// Whether a system tray exists, as Qt sees it.
-//
-// Qt asks the bus daemon whether org.kde.StatusNotifierWatcher has an owner.
-// A sandbox that mediates the daemon can refuse that question; cpak refuses
-// any policy naming org.freedesktop.DBus, which is the daemon itself.
-//
-// Ignoring the refusal and registering with the watcher directly does not
-// work, and it is a tempting enough idea to be worth ruling out here. On a
-// refusal the Qt platform theme builds no tray icon at all
-// (QGenericUnixTheme::createPlatformSystemTrayIcon returns null), so
-// QSystemTrayIcon::show() has nothing to show. Stud cannot reach around that.
-//
-// The sandbox has to allow the question. cpak does now: a policy granting
-// talk to a name may ask who owns that name, and a client owning a name
-// receives calls addressed to it.
+// Qt asks the bus whether org.kde.StatusNotifierWatcher has an owner. A sandbox
+// that refuses that question (cpak did) gets no tray icon at all, and Stud
+// can't work around it: the sandbox has to allow it.
 bool system_tray_exists() {
     if (QSystemTrayIcon::isSystemTrayAvailable()) return true;
     std::fprintf(stderr,
@@ -83,30 +70,21 @@ bool system_tray_exists() {
 Tray::Tray(QObject* parent) : QObject(parent) {}
 
 bool Tray::show() {
-    // An absent icon gives no way to tell a trayless desktop from a failed
-    // registration, so both cases say which one happened.
     if (!system_tray_exists()) return false;
 
-    // A tray-only process has no windows, and Qt quits an application
-    // when its last window closes. So opening Settings from the tray and
-    // closing it again ended the process, taking the tray icon with it,
-    // for the rest of the session, while the game carried on running with
-    // no way back to the menu.
-    //
-    // The client's exit is what ends this process (main.cpp), not whether
-    // a window happens to be open.
+    // A tray-only process has no windows, so closing Settings would quit it and
+    // take the tray icon away mid-game. The client's exit ends this process.
     QApplication::setQuitOnLastWindowClosed(false);
 
     icon_ = new QSystemTrayIcon(QIcon(":/stud-logo-color.png"), this);
     icon_->setToolTip(QStringLiteral("Stud"));
 
     auto* menu = new QMenu();
-    // Kept so the update entry can be added to it later, when and if the
-    // check comes back saying there is one.
+    // Kept for the update entry, added if the check finds one.
     menu_ = menu;
     menu->addAction(QIcon::fromTheme(QStringLiteral("configure"), QIcon::fromTheme(QStringLiteral("preferences-system"))),
                     QStringLiteral("Stud settings"), this, &Tray::openSettings);
-    // Only while the player is in a server someone else can join.
+    // Shown only while in a server someone else can join.
     QAction* copy_link = menu->addAction(QIcon::fromTheme(QStringLiteral("edit-copy")),
                                          QStringLiteral("Copy server link"), this, &Tray::copyServerLink);
     copy_link->setVisible(false);
@@ -122,9 +100,8 @@ bool Tray::show() {
     icon_->setContextMenu(menu);
     icon_->show();
 
-    // Qt registers the item asynchronously and says nothing when the watcher
-    // never takes it, which looks the same as an icon that failed to draw.
-    // Read the watcher's own list back and report which happened.
+    // Qt registers the item asynchronously and stays silent if the watcher never
+    // takes it; read the watcher's list back to tell which happened.
     QTimer::singleShot(2000, this, [] {
         QDBusMessage ask = QDBusMessage::createMethodCall(
             QStringLiteral("org.kde.StatusNotifierWatcher"),
@@ -145,8 +122,7 @@ bool Tray::show() {
         const QString self = QDBusConnection::sessionBus().baseService();
         const QStringList items =
             reply.arguments().value(0).value<QDBusVariant>().variant().toStringList();
-        // Entries read ":1.47/StatusNotifierItem". Matching on the unique
-        // name plus its separator stops ":1.4" matching ":1.47".
+        // Entries read ":1.47/StatusNotifierItem"; the separator stops ":1.4" matching.
         for (const QString& item : items) {
             if (item.startsWith(self + QLatin1Char('/'))) {
                 std::fprintf(stderr, "stud: the tray accepted this session's icon\n");
@@ -159,8 +135,6 @@ bool Tray::show() {
                      static_cast<long long>(items.size()));
     });
 
-    // Ask GitHub whether there is a newer Stud, once, in the background.
-    // Nothing appears unless there is; see UpdateCheck.
     connect(UpdateCheck::instance(), &UpdateCheck::updateFound, this, &Tray::showUpdateAvailable);
     if (UpdateCheck::updateAvailable()) showUpdateAvailable(UpdateCheck::latestVersion());
     UpdateCheck::start();
@@ -168,12 +142,8 @@ bool Tray::show() {
     return true;
 }
 
-// A newer release exists: say so in the one place a user is already
-// looking, and give them somewhere to go.
-//
-// The icon changes as well as the menu, because a menu entry nobody opens
-// the menu to see is not a notification. It is deliberately NOT a popup:
-// an update is not urgent enough to interrupt a game.
+// Changes the icon as well as the menu, since nobody sees a menu entry without
+// opening the menu. No popup: an update isn't worth interrupting a game.
 void Tray::showUpdateAvailable(const QString& latestVersion) {
     if (icon_ == nullptr || menu_ == nullptr || updateAction_ != nullptr) return;
     updateAction_ = new QAction(QStringLiteral("\u26a0\ufe0f Update Stud"), menu_);
@@ -186,27 +156,21 @@ void Tray::showUpdateAvailable(const QString& latestVersion) {
 void Tray::addUpdateEntry(QAction* action, const QString& toolTip) {
     icon_->setIcon(QIcon(QStringLiteral(":/stud-logo-update.png")));
     icon_->setToolTip(toolTip);
-    // At the top, above Settings: the only entry here that is news rather
-    // than a thing the user came to do.
+    // At the top: the only entry that is news.
     menu_->insertAction(menu_->actions().value(0), action);
     menu_->insertSeparator(menu_->actions().value(1));
 }
 
 void Tray::openSettings() {
-    // One window, whether the request came from here or from the desktop
-    // entry's own Settings action; see SettingsWindow::showSingleton().
     SettingsWindow::showSingleton();
 }
 
-// A link to the server the player is in, for a friend to join with.
 void Tray::copyServerLink() {
     const QString link = current_server_link();
     if (link.isEmpty()) return;  // left the game while the menu was open
-    // On Wayland a clipboard offer is accepted only with the serial of an
-    // input event on one of the application's own surfaces, and the tray's
-    // menu is the desktop's, not a Qt surface: Qt's clipboard is ignored.
-    // wl-copy owns the selection in a process of its own, which is how a
-    // windowless program copies there. Qt's clipboard is still set for X11.
+    // Wayland only accepts a clipboard offer tied to an input event on one of the
+    // app's surfaces, and the tray menu isn't one, so wl-copy serves it from a
+    // process of its own. Qt's clipboard still covers X11.
     if (qEnvironmentVariableIsSet("WAYLAND_DISPLAY")) {
         QProcess copier;
         copier.setProgram(QStringLiteral("wl-copy"));
@@ -238,20 +202,16 @@ void Tray::exportLogs() {
 }
 
 void Tray::showAbout() {
-    // One card, however many times the entry is clicked. QMessageBox::about
-    // builds a new dialog every call, so a few clicks left a stack of
-    // identical windows, the same reason Settings is a singleton.
+    // One dialog however often it's clicked; QMessageBox::about makes a new one each time.
     static QPointer<QDialog> about;
     if (about.isNull()) {
         about = new QDialog();
         about->setWindowTitle(QStringLiteral("About Stud"));
         about->setAttribute(Qt::WA_DeleteOnClose);
         auto* layout = new QVBoxLayout(about);
-        // As big as its contents and no bigger: the window cannot be resized.
         layout->setSizeConstraint(QLayout::SetFixedSize);
         auto* top = new QHBoxLayout();
-        // The ICON, not the wordmark: the square one the tray and the window
-        // use, where a wide wordmark would shrink to a sliver.
+        // The square icon; a wide wordmark would shrink to a sliver.
         constexpr int kIcon = 96;
         auto* icon = new QLabel(about);
         const QPixmap logo(QStringLiteral(":/stud-logo-color.png"));
@@ -259,13 +219,10 @@ void Tray::showAbout() {
             icon->setPixmap(logo.scaled(kIcon, kIcon, Qt::KeepAspectRatio, Qt::SmoothTransformation));
         }
         top->addWidget(icon, 0, Qt::AlignTop);
-        // Beside it: the wordmark, with the version and the author at the top
-        // right as on the welcome page, and what Stud is below.
         auto* side = new QVBoxLayout();
         auto* header = new QHBoxLayout();
         auto* title = new QLabel(about);
-        // The drawing sits inside a transparent margin; cropped to what is
-        // drawn, its left edge lines up with the text below it.
+        // Cropped to its drawn pixels so its left edge lines up with the text.
         QImage wordmark = QImage(QStringLiteral(":/stud-title.png")).convertToFormat(QImage::Format_ARGB32);
         QRect drawn;
         for (int y = 0; y < wordmark.height(); ++y) {
@@ -278,17 +235,13 @@ void Tray::showAbout() {
             title->setPixmap(QPixmap::fromImage(wordmark.copy(drawn))
                                  .scaledToHeight(kIcon * 42 / 100, Qt::SmoothTransformation));
         }
-        // The wordmark with the description under it, a gap between them; the
-        // description wraps short of the version and author on the right.
         auto* lead = new QVBoxLayout();
         lead->addWidget(title, 0, Qt::AlignLeft | Qt::AlignTop);
         lead->addSpacing(about->style()->pixelMetric(QStyle::PM_LayoutVerticalSpacing));
         auto* text = new QLabel(QStringLiteral("Runs Roblox's real, unmodified macOS client on Linux."), about);
         text->setWordWrap(true);
-        // Two lines, the second ending about halfway: each line two thirds of
-        // the sentence's one-line width. Fixed, not a maximum: a wrapping
-        // label asks for a narrower width of its own, and the dialog, sized to
-        // its contents, would take it and wrap onto three short lines.
+        // Two lines, each two thirds of the one-line width. A fixed width, since a
+        // wrapping label would otherwise shrink the fixed-size dialog to three lines.
         const QFontMetrics metrics(text->font());
         text->setFixedWidth(metrics.horizontalAdvance(text->text()) * 2 / 3);
         lead->addWidget(text);
@@ -305,7 +258,6 @@ void Tray::showAbout() {
         side->addStretch();
         top->addLayout(side, 1);
         layout->addLayout(top);
-        // Room between the icon and the buttons.
         layout->addSpacing(2 * about->style()->pixelMetric(QStyle::PM_LayoutVerticalSpacing));
         auto* bottom = new QHBoxLayout();
         bottom->addWidget(github_button(about));
@@ -322,8 +274,7 @@ void Tray::showAbout() {
 }
 
 void Tray::quitStud() {
-    // Ends the session, not just this process: the tray's Exit means what
-    // closing the window means.
+    // Ends the whole session, as closing Roblox's window does.
     if (icon_ != nullptr) icon_->hide();
     terminate_stud_session();
     QApplication::quit();

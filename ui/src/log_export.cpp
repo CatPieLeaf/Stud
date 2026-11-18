@@ -41,12 +41,10 @@ bool nothing_to_export(QWidget* parent, const QStringList& files) {
 }  // namespace
 
 QString export_all_logs(QWidget* parent) {
-    // Every session, not just this one: a problem worth reporting is often
-    // visible in the run before the one the user noticed it in.
+    // Every session: a problem often shows in the run before the one noticed.
     const QStringList files = session_logs();
     if (nothing_to_export(parent, files)) return {};
-    // Roblox's own logs from the same span: complete, where the session log
-    // can lose what the client had not written out when it stopped.
+    // Roblox's logs from the same span, complete where the session log may be cut short.
     const QFileInfo oldest(files.last());
     const QDateTime since = oldest.birthTime().isValid() ? oldest.birthTime() : oldest.lastModified();
     QStringList client_logs;

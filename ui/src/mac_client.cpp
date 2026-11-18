@@ -34,23 +34,20 @@
 namespace stud::ui::client {
 namespace {
 
-// What cancel() stops: the request in flight, or the prefix being made.
 bool g_cancelled = false;
 QPointer<QNetworkReply> g_reply;
 QPointer<QProcess> g_process;
 
-// Roblox's client-version API, which answers for one binary type.
 constexpr const char* kVersionHosts[] = {
     "https://clientsettingscdn.roblox.com",
     "https://clientsettings.roblox.com",
 };
-// Roblox's setup CDN and its two mirrors, tried in order.
+// Tried in order.
 constexpr const char* kSetupHosts[] = {
     "https://setup.rbxcdn.com",
     "https://setup-aws.rbxcdn.com",
     "https://setup-ak.rbxcdn.com",
 };
-// How Roblox names each product on its CDN, and what its zip unpacks to.
 struct ProductInfo {
     const char* binary_type;  // client-version/<this>
     const char* zip;          // <upload>-<this>
@@ -70,16 +67,14 @@ const ProductInfo& info(Product product) {
 
 QString current_marker(Product product) { return clients_dir(product) + QStringLiteral("/current"); }
 
-// The manifest of a build's code, written when it is unpacked; beside the
-// bundle, not in it.
+// The build's code manifest, written beside the bundle when it is unpacked.
 QString integrity_file(Product product, const QString& upload) {
     return clients_dir(product) + "/" + upload + QStringLiteral("/.stud-integrity");
 }
 
 enum class Integrity { Intact, Changed, Unknown };
 
-// Whether the installed build's code is still what was unpacked. Unknown for
-// a build installed before Stud kept a manifest.
+// Unknown for builds installed before Stud kept a manifest.
 Integrity check_integrity(Product product, const Build& build) {
     QFile recorded(integrity_file(product, build.upload));
     if (!recorded.open(QIODevice::ReadOnly)) return Integrity::Unknown;
@@ -94,7 +89,7 @@ QNetworkRequest request_for(const QString& url) {
     return request;
 }
 
-// The upload and version Roblox serves for macOS now; empty when no answer.
+// Empty when Roblox doesn't answer.
 std::pair<QString, QString> served_build(Product product, const QString& channel) {
     QNetworkAccessManager net;
     for (const char* host : kVersionHosts) {
@@ -114,15 +109,13 @@ std::pair<QString, QString> served_build(Product product, const QString& channel
         const QJsonObject json = QJsonDocument::fromJson(reply->readAll()).object();
         const QString upload = json.value(QStringLiteral("clientVersionUpload")).toString();
         const QString version = json.value(QStringLiteral("version")).toString();
-        // It names a folder Stud replaces and deletes: nothing but the shape
-        // Roblox gives it.
+        // Stud deletes folders by this name, so accept only Roblox's format.
         static const QRegularExpression upload_name(QStringLiteral("^version-[0-9a-fA-F]+$"));
         if (upload_name.match(upload).hasMatch()) return {upload, version};
     }
     return {};
 }
 
-// Downloads `url` to `path`, reporting progress. False on any failure.
 bool download(const QString& url, const QString& path, const Progress& progress,
               const QString& what) {
     if (g_cancelled) return false;
@@ -130,7 +123,7 @@ bool download(const QString& url, const QString& path, const Progress& progress,
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) return false;
     QNetworkRequest request = request_for(url);
-    // A stall, not the whole transfer: a slow connection still gets there.
+    // Times out a stall, not a slow transfer.
     request.setTransferTimeout(30000);
     QNetworkReply* reply = net.get(request);
     g_reply = reply;
@@ -148,7 +141,6 @@ bool download(const QString& url, const QString& path, const Progress& progress,
     loop.exec();
     reply->deleteLater();
     if (g_cancelled || reply->error() != QNetworkReply::NoError || write_failed) {
-        // Nothing of it is kept: QSaveFile drops its temporary file.
         file.cancelWriting();
         std::fprintf(stderr, "stud: download of %s failed: %s\n", qPrintable(url),
                      qPrintable(reply->errorString()));
@@ -160,11 +152,9 @@ bool download(const QString& url, const QString& path, const Progress& progress,
 
 }  // namespace
 
-// Unpacks the zip into `dir`. Each entry is checked to stay inside `dir`, and
-// a file keeps the permission bits the archive gives it (the executables need
-// them). Symbolic links (Studio's frameworks have them) are made last, so no
-// file is ever written through one, and only when their target is relative
-// and stays inside `dir` too.
+// Every entry and symlink target must stay inside `dir`; symlinks (Studio's
+// frameworks) are made last so nothing is written through one. Permission bits
+// are kept for the executables.
 bool extract_zip(const QString& zip_path, const QString& dir, QString* error,
                  const std::function<void(int percent)>& step) {
     mz_zip_archive zip{};
@@ -182,7 +172,7 @@ bool extract_zip(const QString& zip_path, const QString& dir, QString* error,
     const mz_uint count = mz_zip_reader_get_num_files(&zip);
     int shown = -1;
     for (mz_uint i = 0; i < count && ok; ++i) {
-        // The window stays live, so Cancel can be pressed mid-unpack.
+        // Keeps Cancel responsive mid-unpack.
         QCoreApplication::processEvents();
         if (g_cancelled) {
             *error = QStringLiteral("cancelled");
@@ -234,7 +224,6 @@ bool extract_zip(const QString& zip_path, const QString& dir, QString* error,
             ok = false;
             break;
         }
-        // Unix permissions sit in the high half of the external attributes.
         const mode_t mode = (stat.m_external_attr >> 16) & 0777;
         if (mode != 0) ::chmod(target_name.constData(), mode);
     }
@@ -252,7 +241,7 @@ bool extract_zip(const QString& zip_path, const QString& dir, QString* error,
 
 namespace {
 
-// Removes every build but `keep`, and anything a failed install left.
+// Also removes what a failed install left.
 void remove_other_builds(Product product, const QString& keep) {
     QDir dir(clients_dir(product));
     for (const QString& name : dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
@@ -300,17 +289,15 @@ std::optional<Build> installed(Product product) {
 std::optional<Build> ensure_current(Product product, const Progress& progress, QString* error) {
     const QString name = display_name(product);
     const std::optional<Build> have = installed(product);
-    // Only a client as Roblox shipped it runs. A changed one is downloaded
-    // again; so is one from before Stud kept a record, when Roblox can be
-    // reached, since nothing says what it should be.
+    // A modified client is downloaded again, as is one with no manifest when
+    // Roblox is reachable.
     const Integrity integrity = have ? check_integrity(product, *have) : Integrity::Intact;
     if (integrity == Integrity::Changed) {
         std::fprintf(stderr, "stud: %s %s was changed since it was installed\n", qPrintable(name),
                      qPrintable(have->upload));
     }
     if (progress) progress(QStringLiteral("Checking for %1 updates").arg(name), -1);
-    // The build of the channel Roblox has this account on; production's when
-    // it has none.
+    // The channel Roblox put this account on; production when none.
     const QString channel = assigned_channel(prefix_dir() + QStringLiteral("/root"), product);
     if (!channel.isEmpty()) {
         std::printf("stud: Roblox has this account on the %s channel\n", qPrintable(channel));
@@ -321,8 +308,7 @@ std::optional<Build> ensure_current(Product product, const Progress& progress, Q
         return std::nullopt;
     }
     if (upload.isEmpty()) {
-        // Offline, or Roblox's API did not answer: what is installed runs,
-        // unless it was changed.
+        // Offline: run what's installed unless it was modified.
         if (have && integrity != Integrity::Changed) return have;
         *error = have ? QStringLiteral("%1 was changed since it was installed, and Roblox could not "
                                        "be reached to download it again.").arg(name)
@@ -332,8 +318,7 @@ std::optional<Build> ensure_current(Product product, const Progress& progress, Q
     if (have && have->upload == upload && integrity == Integrity::Intact) return have;
 
     QDir().mkpath(clients_dir(product));
-    // What an earlier download left when Stud was stopped mid-way: a zip or
-    // its temporary file, and a half-unpacked build.
+    // Leftovers from a download that was stopped midway.
     QDir clients(clients_dir(product));
     for (const QString& stale : clients.entryList({QStringLiteral("*.zip*")}, QDir::Files | QDir::Hidden)) {
         clients.remove(stale);
@@ -347,7 +332,6 @@ std::optional<Build> ensure_current(Product product, const Progress& progress, Q
     bool fetched = false;
     for (const char* host : kSetupHosts) {
         const QString url =
-            // A channel's builds are under channel/common, production's at the top.
             QStringLiteral("%1/%4mac/%2-%3")
                 .arg(QString::fromLatin1(host), upload, QString::fromLatin1(info(product).zip),
                      channel.isEmpty() ? QString() : QStringLiteral("channel/common/"));
@@ -382,9 +366,8 @@ std::optional<Build> ensure_current(Product product, const Progress& progress, Q
                     QFileInfo(staging + "/" + info(product).app + "/Contents/MacOS/" +
                               info(product).executable)
                         .exists();
-    // Signed by Roblox, and every file as Roblox sealed it, before it
-    // replaces anything: the download is the one moment the whole bundle is
-    // Roblox's own, before FFlags and customizations go into it.
+    // Verify the signature and every sealed file before replacing anything: this
+    // is the only moment the bundle is untouched by FFlags and customizations.
     if (in_place) {
         const QString unsigned_reason =
             codesign::verify_app(staging + "/" + info(product).app, QString::fromLatin1(info(product).identifier));
@@ -465,7 +448,7 @@ QString find_rosemary() {
     const QString here = QCoreApplication::applicationDirPath();
     for (const QString& candidate :
          {appdir.isEmpty() ? QString() : appdir + "/libexec/stud/rosemary",
-          // /usr/lib/stud is where an Arch package keeps it, Arch having no libexec.
+          // Arch has no libexec.
           here + "/../libexec/stud/rosemary", here + "/../lib/stud/rosemary",
           here + "/../rosemary/rosemary"}) {
         if (!candidate.isEmpty() && QFileInfo(candidate).isExecutable()) {
@@ -497,7 +480,7 @@ bool ensure_prefix(const QString& rosemary, const Progress& progress, QString* e
     create.start();
     loop.exec();
     if (g_cancelled) {
-        // Half a prefix would pass for a whole one at the next start.
+        // A half-made prefix would pass for a whole one next time.
         create.waitForFinished();
         QDir(prefix_dir()).removeRecursively();
         *error = QStringLiteral("Cancelled.");
@@ -557,8 +540,7 @@ QString assigned_channel(const QString& root, Product product) {
         if (channel.isEmpty() || channel.compare(QLatin1String("production"), Qt::CaseInsensitive) == 0) {
             continue;
         }
-        // Written inside the prefix, and it goes into a download URL: a
-        // channel's name and nothing else.
+        // Used in a path and a download URL, so only a plain channel name.
         static const QRegularExpression channel_name(QStringLiteral("^[A-Za-z0-9_-]+$"));
         if (!channel_name.match(channel).hasMatch()) continue;
         return channel;

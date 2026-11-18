@@ -14,19 +14,14 @@
 struct CubeGlState {
     stud::tools::CubeGl gl{};
     stud::tools::SpinningCube cube;
-    // Which stud this cube's texture holds; see shared_stud().
+    // See shared_stud().
     unsigned generation = 0;
 };
 
 namespace {
 
-// One Roblox stud, out of the studs texture the client ships, read from the
-// installed Roblox Player rather than carried in Stud.
-//
-// The file is a strip of square tiles, one per surface type, Studs first,
-// and each tile holds two studs by two: so the top-left quarter of the
-// first tile is exactly one stud. It is DXT1; anything else, or no client
-// installed yet, and the cube keeps its plain colours.
+// One stud from the installed Player's DXT1 studs texture: the top-left quarter of
+// the first tile. Plain colours when it's missing or another format.
 std::vector<unsigned char> load_one_stud(int& size) {
     const auto build = stud::ui::client::installed(stud::ui::client::Product::Player);
     if (!build) {
@@ -58,7 +53,7 @@ std::vector<unsigned char> load_one_stud(int& size) {
     }
     size = static_cast<int>(width / 2);
     std::vector<unsigned char> stud(static_cast<size_t>(size) * size);
-    // A 5:6:5 colour's luminance, at 8 bits.
+    // 5:6:5 luminance at 8 bits.
     auto luminance = [](uint16_t c, int weight_of_other = 0, uint16_t other = 0, int parts = 1) {
         auto channel = [](uint16_t v, int shift, int bits) { return ((v >> shift) & ((1 << bits) - 1)) * 255 / ((1 << bits) - 1); };
         auto lum = [&](uint16_t v) { return (channel(v, 11, 5) * 77 + channel(v, 5, 6) * 150 + channel(v, 0, 5) * 29) >> 8; };
@@ -94,9 +89,8 @@ std::vector<unsigned char> load_one_stud(int& size) {
     return stud;
 }
 
-// The one stud every cube draws: read from disk the first time a cube asks,
-// and again only after cube_gl_client_changed(). All on the GUI thread, where
-// the cubes draw and the download reports.
+// Read on the first request and again after cube_gl_client_changed(), all on the
+// GUI thread.
 unsigned g_client_generation = 1;
 
 struct SharedStud {
@@ -153,7 +147,7 @@ CubeGlState* cube_gl_create(void* (*resolve)(const char* name, void* data), void
         delete state;
         return nullptr;
     }
-    // Optional: without them the cube is just not textured.
+    // Without these the cube is untextured.
     auto optional = [&](auto& field, const char* name) {
         field = reinterpret_cast<std::remove_reference_t<decltype(field)>>(resolve(name, data));
     };
@@ -172,14 +166,13 @@ CubeGlState* cube_gl_create(void* (*resolve)(const char* name, void* data), void
 }
 
 void cube_gl_draw(CubeGlState* state, float seconds, int width, int height) {
-    // A download finished since this cube took its stud: take it again.
+    // A download finished since this cube took its stud.
     if (state->generation != g_client_generation) {
         const SharedStud& stud = shared_stud();
         state->cube.set_face(state->gl, stud.pixels.empty() ? nullptr : stud.pixels.data(), stud.size);
         state->generation = stud.generation;
     }
-    // 2.1: the closest the camera can sit with no corner ever leaving the
-    // drawable, measured over a full turn (90% of the half-width at most).
+    // The closest distance where no corner leaves the drawable over a full turn.
     state->cube.draw(state->gl, seconds, width, height, 2.1f, /*transparent=*/true);
 }
 

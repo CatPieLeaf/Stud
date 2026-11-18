@@ -85,8 +85,7 @@ void install(const QString& id_suffix, const QString& name, const QString& exec,
     (void)registered;
     QDBusConnection bus = QDBusConnection::sessionBus();
 
-    // The request's object path is known before the call, from the token
-    // and this connection's name, so its Response is listened for first.
+    // The request path is derivable from the token, so Response is subscribed before the call.
     const QString token = QStringLiteral("stud%1").arg(QRandomGenerator::global()->generate());
     QString sender = bus.baseService().mid(1);
     sender.replace(QLatin1Char('.'), QLatin1Char('_'));
@@ -116,7 +115,7 @@ void install(const QString& id_suffix, const QString& name, const QString& exec,
     prepare << QString() << name << QVariant::fromValue(QDBusVariant(QVariant::fromValue(icon)))
             << QVariantMap{{QStringLiteral("handle_token"), token},
                            {QStringLiteral("modal"), true},
-                           {QStringLiteral("launcher_type"), uint(1)},  // an application
+                           {QStringLiteral("launcher_type"), uint(1)},  // application
                            {QStringLiteral("editable_name"), true},
                            {QStringLiteral("editable_icon"), false}};
     auto* watcher = new QDBusPendingCallWatcher(bus.asyncCall(prepare), request);

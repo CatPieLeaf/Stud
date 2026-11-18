@@ -19,7 +19,7 @@ std::string read(const std::string& path) {
     return text;
 }
 
-// A kernel CPU list, "0-3,8,10-11".
+// e.g. "0-3,8,10-11".
 std::vector<int> parse_list(const std::string& text) {
     std::vector<int> cpus;
     std::stringstream parts(text);
@@ -40,7 +40,6 @@ std::vector<int> parse_list(const std::string& text) {
 
 std::vector<int> online() { return parse_list(read(kCpus + "/online")); }
 
-// A number a file holds, or -1.
 long long number(const std::string& path) {
     try {
         const std::string text = read(path);
@@ -52,17 +51,14 @@ long long number(const std::string& path) {
 
 std::string cpu_dir(int cpu) { return kCpus + "/cpu" + std::to_string(cpu); }
 
-// Intel's hybrid parts: the kernel names the performance cores' PMU
-// `cpu_core`, and the efficiency and low-power efficiency cores'
-// `cpu_atom`.
+// Intel hybrid: the performance cores' PMU is `cpu_core`, the efficiency cores' `cpu_atom`.
 std::vector<int> intel_performance_cores(const std::vector<int>& all) {
     std::vector<int> cores = parse_list(read("/sys/devices/cpu_core/cpus"));
     if (cores.empty() || cores.size() >= all.size()) return {};
     return cores;
 }
 
-// ARM's big.LITTLE and its kind: each core's capacity, the largest being the
-// fastest.
+// ARM big.LITTLE: the cores with the highest capacity.
 std::vector<int> highest_capacity(const std::vector<int>& all) {
     std::map<int, long long> capacity;
     for (const int cpu : all) {
@@ -79,8 +75,7 @@ std::vector<int> highest_capacity(const std::vector<int>& all) {
     return cores.size() < all.size() ? cores : std::vector<int>{};
 }
 
-// A cache's size as the kernel writes it ("32768K", "96M"), in bytes; -1
-// when unreadable.
+// "32768K" or "96M" in bytes; -1 when unreadable.
 long long cache_bytes(const std::string& text) {
     try {
         std::size_t used = 0;
@@ -92,16 +87,12 @@ long long cache_bytes(const std::string& text) {
     }
 }
 
-// Anything else with kinds of core on caches of their own: the last-level
-// cache group with the most cache, as AMD's X3D parts have one with 3D
-// V-Cache, which a game runs faster on even at its lower clock; and where
-// the caches are alike (AMD's compact cores), the group whose cores run
-// fastest.
+// Otherwise the last-level cache group with the most cache (AMD X3D's V-Cache, faster
+// for games despite lower clocks), or the fastest cores when caches are alike.
 std::vector<int> fastest_cache_group(const std::vector<int>& all) {
     std::map<std::string, std::vector<int>> groups;
     std::map<std::string, long long> cache;
     for (const int cpu : all) {
-        // The highest cache level the kernel lists for this processor.
         std::string shared;
         std::string size;
         for (int index = 0;; ++index) {
@@ -116,8 +107,6 @@ std::vector<int> fastest_cache_group(const std::vector<int>& all) {
         cache[shared] = cache_bytes(size);
     }
     if (groups.size() < 2) return {};
-    // Each group's measure, and the groups that reach the best of it: the
-    // cache size where the groups differ in it, else the fastest core.
     long long least_cache = -1, most_cache = -1;
     for (const auto& [key, bytes] : cache) {
         least_cache = least_cache < 0 ? bytes : std::min(least_cache, bytes);

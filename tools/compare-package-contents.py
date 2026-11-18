@@ -47,14 +47,8 @@ def extract(package: Path, kind: str, dest: Path) -> None:
     elif kind == "deb":
         subprocess.run(["dpkg-deb", "-x", str(package), str(dest)], check=True)
     elif kind == "arch":
-        # Through tar rather than Python's own tarfile, which only learned
-        # to read zstd in 3.14, the release runner has 3.12 and failed
-        # with "not a gzip file ... invalid header" on a perfectly good
-        # package. tar hands the work to the zstd binary, which is present
-        # wherever an Arch package can be built in the first place.
-        #
-        # The excludes drop Arch's own metadata (.PKGINFO, .MTREE,
-        # .BUILDINFO), which is not part of the payload being compared.
+        # tar rather than tarfile, which only reads zstd from Python 3.14.
+        # Arch's metadata files aren't payload.
         subprocess.run(
             ["tar", "--zstd", "-xf", str(package), "-C", str(dest),
              "--exclude=.PKGINFO", "--exclude=.MTREE", "--exclude=.BUILDINFO",
@@ -70,9 +64,7 @@ def main() -> int:
     ap.add_argument("--package", required=True, type=Path)
     ap.add_argument("--kind", required=True, choices=["rpm", "deb", "arch"])
     ap.add_argument("--work", required=True, type=Path)
-    # For a format this machine cannot unpack itself: a deb needs dpkg,
-    # which the release runner does not have, so it is extracted in a
-    # real Debian container and the result handed here already unpacked.
+    # e.g. a deb, unpacked in a Debian container since the runner has no dpkg.
     ap.add_argument("--already-extracted", action="store_true",
                     help="--work already holds the unpacked payload")
     args = ap.parse_args()
@@ -90,8 +82,7 @@ def main() -> int:
         return 1
 
     if args.kind == "arch":
-        # The one relocation Arch packaging requires, applied to the
-        # reference rather than treated as a difference.
+        # Arch moves libexec/stud to lib/stud.
         reference = {p.replace("/usr/libexec/stud", "/usr/lib/stud", 1): d
                      for p, d in reference.items()}
 
@@ -103,7 +94,7 @@ def main() -> int:
     print(f"{args.package.name}: {len(packaged)} file(s) against "
           f"{len(reference)} in the install tree")
 
-    # Files a packaging system adds itself are not a discrepancy.
+    # Added by the packaging system.
     ignorable = ("/usr/share/doc/stud/changelog", "/usr/share/doc/stud/copyright.gz")
     extra = [p for p in extra if not p.startswith(ignorable)]
 

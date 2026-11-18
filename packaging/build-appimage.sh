@@ -1,20 +1,12 @@
 #!/usr/bin/env bash
 #
-# Builds Stud as an AppImage: one file that runs on any distribution
-# without installing anything.
+# Builds Stud as an AppImage with quick-sharun (pkgforge-dev/Anylinux-AppImages):
+# every library bundled, glibc and Mesa included, packed as SquashFS behind
+# uruntime, which mounts with or without FUSE.
 #
-# The bundle is made by quick-sharun, from the Anylinux AppImages project
-# (github.com/pkgforge-dev/Anylinux-AppImages). It carries every library
-# Stud needs, glibc and mesa included, and starts each executable through
-# sharun, so nothing about the host's libraries is a requirement. The
-# image is packed as SquashFS behind uruntime, which mounts it with FUSE
-# when it can and without it when it cannot.
-#
-# Usage:
-#   packaging/build-appimage.sh [build-dir]
-#
-# It runs in a container built from packaging/Containerfile.appimage,
-# needs podman or docker, and writes build-appimage/packages/.
+# Usage: packaging/build-appimage.sh [build-dir]
+# Runs in packaging/Containerfile.appimage (podman or docker) and writes
+# build-appimage/packages/.
 
 set -euo pipefail
 
@@ -50,26 +42,22 @@ arch="$(uname -m)"
 app_id="$(grep -m1 '^set(STUD_APP_ID' "$repo_root/CMakeLists.txt" | cut -d'"' -f2)"
 [ -n "$app_id" ] || die "could not read STUD_APP_ID out of CMakeLists.txt"
 
-# STUD_CMAKE_ARGS passes anything through; release automation sets
-# -DSTUD_VERSION with it.
+# STUD_CMAKE_ARGS passes extra flags; releases set -DSTUD_VERSION with it.
 say "building"
 # shellcheck disable=SC2086
 cmake -S "$repo_root" -B "$build_dir" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DCMAKE_INSTALL_PREFIX=/usr -DSTUD_BUILD_TESTS=OFF ${STUD_CMAKE_ARGS:-} >&2
 cmake --build "$build_dir" -j"$(nproc)" >&2
 
-# quick-sharun deploys from the system, not from a staging tree, and this
-# container is thrown away afterwards.
+# quick-sharun deploys from the system, and the container is thrown away.
 say "installing into /usr"
 cmake --install "$build_dir" >/dev/null
 
-# Stud, Rosemary, and Rosemary's upscaler shaders: one built without glslc
-# scales plainly, and the upscalers in Settings would do nothing.
+# Rosemary's upscaler shaders must be there, or the upscalers do nothing.
 python3 "$repo_root/tools/validate-payload.py" / --label "installed tree" \
     --rosemary-source "$build_dir/rosemary-prefix/src/rosemary" >&2 || die "the install is incomplete"
 
-# Anylinux's tools, pinned to one commit and checked, since what they
-# download ends up inside the image.
+# Pinned and checked, since what they download ends up in the image.
 anylinux_rev=de2a80d6229298518cc737ced6b3fa5832053ea5
 tools="$work/tools"
 mkdir -p "$tools"
@@ -83,8 +71,7 @@ fetch_tool() {
 fetch_tool quick-sharun.sh 8026711b271c0d67d37075cd7e8c50dbd9fa635c012f9edb92a2c0d41573664b
 fetch_tool get-debloated-pkgs.sh 217ff68aafe085d2d4ab34a50e267805af43736ad8ef880c01ef88e52db8589f
 
-# Mesa without the LLVM it normally drags in. NVIDIA's driver is never
-# bundled: sharun loads the host's, whatever libc it was built against.
+# Mesa without LLVM. NVIDIA's driver is never bundled; sharun loads the host's.
 say "installing Anylinux's mesa"
 "$tools/get-debloated-pkgs.sh" --add-mesa
 
@@ -93,16 +80,13 @@ export APPDIR="$appdir"
 export DESKTOP="/usr/share/applications/$app_id.desktop"
 export ICON="/usr/share/icons/hicolor/512x512/apps/$app_id.png"
 export DEPLOY_QT=1 DEPLOY_VULKAN=1 DEPLOY_OPENGL=1 DEPLOY_PULSE=1
-# Only the UI can be traced: Rosemary exits at once without the client
-# stud-ui hands it.
+# Only the UI can be traced: Rosemary exits at once without a client to run.
 export STRACE_BINARY=stud
 
-# Everything loaded by name at runtime, which no tracer of the UI sees:
-# Rosemary's SDL3 and, through it, the window system, sound and input
-# libraries SDL opens itself; its Vulkan, EGL and GBM; FFmpeg for video;
-# and the KF6 plugin Breeze asks the compositor through.
+# Libraries loaded by name at runtime, which tracing the UI can't see: SDL3 and
+# what it opens, Vulkan/EGL/GBM, FFmpeg, and the KF6 plugin Breeze uses.
 qt_plugins="$(qmake6 -query QT_INSTALL_PLUGINS)"
-# FFmpeg by the name Rosemary opens, whichever release the image carries.
+# FFmpeg under the SONAME Rosemary opens.
 soname() { objdump -p "$1" | awk '/SONAME/ { print $2 }'; }
 dlopened=(
     /usr/lib/libSDL3.so.0
@@ -123,58 +107,43 @@ say "bundling"
     /usr/libexec/stud/rosemary \
     "${dlopened[@]}"
 
-# quick-sharun rewrites every /usr/lib and /usr/share it finds in an
-# executable to point into the bundle. Stud's are not its own files: the
-# host's MangoHud, and the macOS paths Rosemary hands the client
-# (/usr/lib/libSystem.B.dylib is the guest's, not the bundle's). Both
-# executables go back in unrewritten.
+# quick-sharun rewrites /usr/lib and /usr/share paths in executables, but these
+# point to the host's MangoHud and the guest's macOS paths, so restore both.
 for exe in /usr/bin/stud /usr/libexec/stud/rosemary; do
     strip -o "$appdir/shared/bin/${exe##*/}" "$exe"
 done
 
-# stud-ui starts Rosemary by path, from libexec/stud beside bin/. A
-# hardlink to sharun there runs the same shared/bin binary.
+# stud-ui finds Rosemary in libexec/stud; a hardlink to sharun there runs it.
 mkdir -p "$appdir/libexec/stud"
 ln -f "$appdir/sharun" "$appdir/libexec/stud/rosemary"
-# Stud's own share/ files: the desktop entry and icons it installs for
-# the user, and the licences of everything it redistributes.
+# The desktop entry and icons Stud installs, and redistributed licences.
 (cd /usr/share && cp -a --parents \
     "applications/$app_id.desktop" "applications/$app_id.Player.desktop" \
     "applications/$app_id.Studio.desktop" "metainfo/$app_id.metainfo.xml" "mime/packages/$app_id.xml" \
     icons/hicolor/*/apps/"$app_id"*.png licenses/stud doc/stud \
     "$appdir/share/")
-# AppImageHub reads the AppStream metainfo only from usr/share/metainfo.
+# AppImageHub only reads metainfo from usr/share/metainfo.
 mkdir -p "$appdir/usr/share"
 ln -s ../../share/metainfo "$appdir/usr/share/metainfo"
 
-# What the old AppRun set, sourced by quick-sharun's AppRun before Stud
-# starts.
+# Sourced by quick-sharun's AppRun before Stud starts.
 cat > "$appdir/bin/stud.hook" <<'HOOK'
-# Host programs Stud starts (desktop tools, a browser) get back exactly
-# the library path they would have had; see ui/src/desktop_entry.cpp.
+# Host programs Stud starts get their original library path (desktop_entry.cpp).
 export STUD_HOST_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
 
-# AppRun.lib moves XDG_CACHE_HOME to ~/.cache/AppImage-Cache. Stud's cache
-# (the web views') stays where every other package of Stud keeps it;
-# CACHEDIR is the value from before the move.
+# Undo AppRun.lib's cache move, so the web views' cache stays in ~/.cache.
 export XDG_CACHE_HOME="$CACHEDIR"
 
-# The host's own platform theme is a plugin built against the host's Qt
-# and cannot load here; the portal one gives the desktop's real colours,
-# fonts and icons.
+# The host's theme plugin can't load against the bundled Qt; the portal's matches the desktop.
 [ -n "${QT_QPA_PLATFORMTHEME:-}" ] || export QT_QPA_PLATFORMTHEME=xdgdesktopportal
 
-# Breeze only on KDE; anywhere else the portal theme's choice is right.
 case "${XDG_CURRENT_DESKTOP:-}" in
     *KDE*) [ -n "${QT_STYLE_OVERRIDE:-}" ] || export QT_STYLE_OVERRIDE=Breeze ;;
 esac
 HOOK
 
-# QtWebEngine, for the login page: its helper process, its resources and
-# its locales are all bundled, but Qt looks for them under share/qt6 and
-# beside the executable, finds none of them, and aborts the web view at
-# start. The Flatpak sets the same three for the same reason. Looked up, since where
-# quick-sharun puts each follows the source's layout.
+# QtWebEngine's helper, resources and locales are bundled but Qt looks elsewhere
+# and aborts the web view. Looked up, since quick-sharun's layout follows the source.
 webengine_process="$(find "$appdir/bin" -maxdepth 1 -name QtWebEngineProcess -print -quit)"
 webengine_resources="$(find "$appdir" -name qtwebengine_resources.pak -printf '%h\n' -quit)"
 webengine_locales="$(find "$appdir" -type d -name qtwebengine_locales -print -quit)"
@@ -183,7 +152,6 @@ webengine_locales="$(find "$appdir" -type d -name qtwebengine_locales -print -qu
 [ -n "$webengine_locales" ] || die "quick-sharun did not bundle QtWebEngine's locales"
 cat >> "$appdir/bin/stud.hook" <<HOOK
 
-# QtWebEngine's own files; see build-appimage.sh.
 export QTWEBENGINEPROCESS_PATH="\$APPDIR/${webengine_process#"$appdir"/}"
 export QTWEBENGINE_RESOURCES_PATH="\$APPDIR/${webengine_resources#"$appdir"/}"
 export QTWEBENGINE_LOCALES_PATH="\$APPDIR/${webengine_locales#"$appdir"/}"
@@ -199,9 +167,7 @@ do
         die "no $plugin in the bundle"
 done
 
-# Packed as SquashFS behind uruntime, not the DwarFS quick-sharun makes:
-# AppImageHub, firejail --appimage and the classic AppImage runtime can
-# only mount SquashFS, and AppImageHub tests every image that way.
+# SquashFS, not DwarFS: AppImageHub, firejail and the classic runtime only mount SquashFS.
 uruntime_version=v0.8.1
 uruntime_sha256=2153e68d63f570c7ebe3d1f38df0fa16814f34d839c5cce2ee42667e327708e8
 uruntime="$tools/uruntime-$uruntime_version"
@@ -218,8 +184,7 @@ rm -f "$out" "$out.zsync" "$work/image.squashfs"
 "$uruntime" --appimage-mksquashfs "$appdir" "$work/image.squashfs" \
     -comp zstd -Xcompression-level 19 -b 1M -all-root -noappend -no-progress -quiet
 cp "$uruntime" "$out"
-# AppImageUpdate and other updaters update Stud in place from the newest
-# GitHub release, through the .zsync published beside it.
+# Lets AppImageUpdate update Stud in place from the latest release's .zsync.
 "$out" --appimage-addupdinfo "gh-releases-zsync|CatPieLeaf|Stud|latest|Stud-$arch.AppImage.zsync"
 cat "$work/image.squashfs" >> "$out"
 rm -f "$work/image.squashfs"

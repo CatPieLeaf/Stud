@@ -24,8 +24,7 @@ namespace {
 int64_t now_seconds() { return QDateTime::currentSecsSinceEpoch(); }
 
 QString flag_of(const QString& country_code) {
-    // A flag emoji is the country's two letters as regional indicator
-    // symbols, U+1F1E6 being 'A', so any ISO code becomes one.
+    // Regional indicator symbols: U+1F1E6 is 'A'.
     QString flag;
     if (country_code.size() != 2) return flag;
     for (const QChar c : country_code.toUpper()) {
@@ -74,7 +73,7 @@ void GameActivity::read_studio_log(const QString& path) {
     if (it == studio_read_.end()) return;
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) return;
-    if (file.size() < it->first) it->first = 0;  // written afresh
+    if (file.size() < it->first) it->first = 0;  // truncated
     file.seek(it->first);
     QByteArray text = it->second + file.readAll();
     it->first = file.pos();
@@ -91,8 +90,7 @@ GameActivity::~GameActivity() {
 }
 
 bool GameActivity::wants(const QByteArray& line) {
-    // Every line line() reacts to: one it reads that is missing here never
-    // reaches it.
+    // Every line line() reacts to must be listed here.
     static const char* const kMarks[] = {
         "! Joining game", "UDMUX Address", "doTeleport: joinScriptUrl",
         "Report game_join_loadtime:", "[BloxstrapRPC] ", "[FLog::SingleSurfaceApp] leaveUGCGameInternal",
@@ -116,11 +114,8 @@ void GameActivity::line(const QByteArray& raw) {
         QStringLiteral(R"(! Joining game '([0-9a-fA-F-]+)' place (\d+))"));
     // "UDMUX Address = <public address>, Port = ..."
     static const QRegularExpression udmux(QStringLiteral(R"(UDMUX Address = ([0-9.]+))"));
-    // A teleport's join type: 4 and 6 are the private-game ones, which is
-    // what a reserved server is (the line also holds the join ticket, which
-    // is not kept).
+    // Join types 4 and 6 are reserved servers. The ticket on this line isn't kept.
     static const QRegularExpression join_type(QStringLiteral(R"(JoinTypeId"%3a(\d+)%2c)"));
-    // The page the join came from: a private server's invite or its page.
     static const QRegularExpression referral(QStringLiteral(R"(referral_page:([^,]+))"));
     if (const auto m = joining.match(text); m.hasMatch()) {
         joined(m.captured(2), m.captured(1));
@@ -137,8 +132,7 @@ void GameActivity::line(const QByteArray& raw) {
             publish();
         }
     } else if (text.startsWith(QStringLiteral("[BloxstrapRPC] "))) {
-        // The client prints each one twice, once in its log format and once
-        // bare; the bare one is taken.
+        // The client prints each one twice; the bare copy is used.
         const QJsonObject message =
             QJsonDocument::fromJson(raw.mid(qsizetype(sizeof("[BloxstrapRPC] ")) - 1)).object();
         const QString command = message.value(QStringLiteral("command")).toString();
@@ -152,19 +146,15 @@ void GameActivity::line(const QByteArray& raw) {
             }
         }
     } else if (text.contains(QStringLiteral("[FLog::SingleSurfaceApp] leaveUGCGameInternal"))) {
-        // Back to the app. Not Client:Disconnect: a teleport (a lobby's
-        // reserved server, another place, another game) disconnects too, and
-        // the old connection can finish closing after the new join's line,
-        // which ended the game just joined. A teleport logs its own
-        // "Joining game", which replaces the place instead.
+        // Not on Client:Disconnect: a teleport disconnects too, and its close can
+        // land after the new join. A teleport logs its own "Joining game".
         left();
     }
 }
 
 void GameActivity::joined(const QString& place, const QString& job) {
     if (place == place_ && job == job_) return;
-    // A teleport (to a lobby, another place, another game) ends the server
-    // it leaves as leaving would: kept in the history, its location dropped.
+    // A teleport ends the server it leaves: kept in history, location dropped.
     if (!place_.isEmpty() && options_.history_games) {
         history::record(place_, name_, icon_, job_, joined_at_, now_seconds(), location_,
                         options_.history_servers);
@@ -188,9 +178,7 @@ void GameActivity::joined(const QString& place, const QString& job) {
 }
 
 void GameActivity::look_up(const QString& place) {
-    // For presence, and for the History tab's names and icons.
     if (!options_.discord && !options_.history_games) return;
-    // The place's universe, then its name, creator and icon.
     const quint64 generation = generation_;
     fetch(QStringLiteral("https://apis.roblox.com/universes/v1/places/%1/universe").arg(place),
           [this, generation](const QJsonObject& json) {
@@ -245,11 +233,9 @@ void GameActivity::left() {
 }
 
 void GameActivity::server(const QString& address) {
-    // Looked up for the notification, or for the server history.
     const bool for_history = options_.history_games && options_.history_servers;
     if (!options_.region && !for_history) return;
-    // Over TLS, and only ever the game server's public address, never the
-    // player's.
+    // Over TLS, and only the game server's public address, never the player's.
     const quint64 generation = generation_;
     fetch(QStringLiteral("https://ipwho.is/%1?fields=success,country,country_code,city").arg(address),
           [this, generation](const QJsonObject& json) {
@@ -266,11 +252,9 @@ void GameActivity::server(const QString& address) {
           });
 }
 
-// BloxstrapRPC's SetRichPresence, as Froststrap and Bloxstrap read it:
-// details and state (at most 128 characters; "<reset>" goes back to Stud's),
-// timeStart and timeEnd (Unix seconds; 0 clears one), and smallImage and
-// largeImage ({assetId, hoverText, clear, reset}). An absent key leaves what
-// is showing.
+// BloxstrapRPC's SetRichPresence: details/state (128 chars max; "<reset>" restores
+// Stud's), timeStart/timeEnd (Unix seconds; 0 clears), smallImage/largeImage
+// ({assetId, hoverText, clear, reset}). Absent keys leave what's showing.
 void GameActivity::rich_presence(const QJsonObject& data) {
     if (!options_.discord || place_.isEmpty()) return;
     const auto text = [&data](const char* key, std::string& out, bool& set) {
@@ -286,7 +270,7 @@ void GameActivity::rich_presence(const QJsonObject& data) {
         const QJsonValue value = data.value(QLatin1String(key));
         if (!value.isDouble()) return;
         out = value.toInteger();
-        set = true;  // 0 is set too: it clears the time
+        set = true;  // 0 clears it
     };
     time("timeStart", game_.start, game_start_);
     time("timeEnd", game_.end, game_end_);
@@ -323,8 +307,7 @@ QString g_server_link;
 
 QString current_server_link() { return g_server_link; }
 
-// The link to this server, where anyone can join it: a public server, or a
-// reserved one the game has given launch data for. Never a private server's.
+// Public servers and reserved ones with launch data; never private servers.
 QString GameActivity::server_link() const {
     if (options_.studio || place_.isEmpty() || job_.isEmpty()) return {};
     const bool joinable =
@@ -343,8 +326,7 @@ void GameActivity::publish() {
     if (!options_.discord) return;
     DiscordActivity a;
     if (options_.studio) {
-        // A published place by its name and icon, which Roblox's public
-        // lookups give without signing in; a local file as "a place".
+        // A published place by its public name and icon; a local file as "a place".
         if (studio_doc_ == -2) {
             a.details = studio_editing_ ? "Developing a place" : "In Roblox Studio";
         } else if (studio_doc_ == -1) {
@@ -372,7 +354,7 @@ void GameActivity::publish() {
     a.large_text = !game_.large_text.empty() ? game_.large_text : name_.toStdString();
     a.small_image = game_.small_image;
     a.small_text = game_.small_text;
-    // The game's name as the short status, in place of "Playing ROBLOX".
+    // The game's name as the short status instead of "Playing ROBLOX".
     a.status_display = 2;
     a.start = game_start_ ? game_.start : joined_at_;
     a.end = game_end_ ? game_.end : 0;
@@ -384,7 +366,6 @@ void GameActivity::publish() {
     discord_rpc_set(a);
 }
 
-// Studio: a place being edited, a script open, or Studio on its start page.
 void GameActivity::studio_line(const QString& text) {
     // "[FLog::CloseDataModel] Setting place ID <id>": a published place.
     static const QRegularExpression place_id(QStringLiteral(R"(\[FLog::CloseDataModel\] Setting place ID (\d+))"));
@@ -407,7 +388,6 @@ void GameActivity::studio_line(const QString& text) {
     if (const auto match = doc_type.match(text); match.hasMatch()) {
         const int type = match.captured(1).toInt();
         if (type == studio_doc_) return;
-        // The start page again: whatever place was open is closed.
         if (type == -1 || studio_doc_ == -1 || studio_doc_ == -2) studio_since_ = now_seconds();
         if (type == -1) {
             ++generation_;

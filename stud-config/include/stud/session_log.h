@@ -9,21 +9,14 @@
 #include <cstdio>
 #include <string>
 
-// One log file per Stud session.
-//
-// A terminal, if the user happened to start Stud from one, and the systemd
-// journal, if the launch came from the desktop entry, are not things a user
-// can be asked to produce when something goes wrong. So the launcher tees its
-// stdout and stderr, which carry the client's output too, into the session
-// log, and keeps writing to wherever they already went.
-//
-// A tee and not a plain redirect: redirecting would take the output away from
-// whoever was already reading it.
+// One log per session: stdout and stderr, which carry the client's output too, are
+// teed into it so users can send a log without a terminal or journal. A tee keeps
+// the output going where it already went.
 namespace stud::logging {
 
 namespace detail {
 
-// The real stdout, saved before the tee replaced fd 1.
+// The original stdout, saved before the tee replaced fd 1.
 inline int& passthrough_fd_storage() {
     static int fd = -1;
     return fd;
@@ -47,10 +40,8 @@ inline void write_fully(int fd, const char* data, size_t size) {
     }
 }
 
-// Whether a chunk can go to the real stdout right now. Whoever reads it may
-// have stopped (a terminal paused with Ctrl+S, a pipe nobody reads), and
-// waiting for them would fill the pipe behind this and block every print in
-// the process. They miss that chunk; the log does not.
+// A stalled reader (paused terminal, unread pipe) would block every print in the
+// process, so it misses that chunk; the log doesn't.
 inline bool passthrough_ready(int fd) {
     pollfd p{fd, POLLOUT, 0};
     return ::poll(&p, 1, 0) > 0 && (p.revents & POLLOUT) != 0;
@@ -66,8 +57,7 @@ inline void* tee_thread(void* arg) {
             break;
         }
         if (got == 0) break;
-        // Both destinations get every byte they can take; this is a logger,
-        // and it must never be the reason a process stalls.
+        // A logger must never stall the process.
         if (state->passthrough_fd >= 0 && passthrough_ready(state->passthrough_fd)) {
             write_fully(state->passthrough_fd, buffer, static_cast<size_t>(got));
         }
@@ -80,9 +70,7 @@ inline void* tee_thread(void* arg) {
 
 }  // namespace detail
 
-// Tees this process's stdout and stderr into `path`. Safe to call with an
-// empty path (does nothing) and when the file cannot be opened: output simply
-// keeps going where it already went.
+// Does nothing for an empty path or a file that can't be opened.
 inline bool start_session_log(const std::string& path) {
     if (path.empty()) return false;
     const int log_fd =
@@ -95,8 +83,6 @@ inline bool start_session_log(const std::string& path) {
         return false;
     }
 
-    // Keep the real stdout so the tee can still write to it after fd 1 has
-    // been replaced by the pipe.
     const int passthrough = ::fcntl(STDOUT_FILENO, F_DUPFD_CLOEXEC, 0);
     detail::passthrough_fd_storage() = passthrough;
 
@@ -117,17 +103,13 @@ inline bool start_session_log(const std::string& path) {
     ::dup2(pipe_fds[1], STDERR_FILENO);
     ::close(pipe_fds[1]);
 
-    // Line buffering, so a crash cannot swallow the last lines still sitting
-    // in libc's buffer: stdout is a pipe now, and a pipe is block-buffered by
-    // default.
+    // stdout is a pipe now, block-buffered by default, so a crash could lose the last lines.
     ::setvbuf(stdout, nullptr, _IOLBF, 0);
     ::setvbuf(stderr, nullptr, _IONBF, 0);
     return true;
 }
 
-// The real stdout this process had before start_session_log() replaced it,
-// or -1 if no tee is running. Hand this to a child as its stdout and stderr
-// so it writes where this process's output really goes.
+// The original stdout, or -1 without a tee. Give it to children as stdout and stderr.
 inline int passthrough_stdout_fd() { return detail::passthrough_fd_storage(); }
 
 }  // namespace stud::logging

@@ -4,28 +4,16 @@
 
 namespace stud::ui {
 
-// Registers Stud's desktop entry and icons in the user's own
-// ~/.local/share tree, pointing at however Stud is being run right now.
-//
-// A package's own entry is installed system-wide and needs none of this.
-// An AppImage is a single file that installs nothing, so nothing ties its
-// windows back to an icon: Wayland has no window-icon protocol, and a
-// compositor finds an application's icon by matching the surface's app_id
-// against a .desktop file. Without an entry the taskbar shows a
-// placeholder however correct the app_id is, and `roblox://` links from
-// a browser have nothing to open either.
-//
-// Writes only under $XDG_DATA_HOME, never system-wide, and only when
-// asked (`stud --install-desktop-entry`).
-//
+// `stud --install-desktop-entry`: registers the entry and icons under $XDG_DATA_HOME
+// for the current launcher. An AppImage installs nothing, and without an entry the
+// compositor can't match the app_id to an icon or open roblox:// links.
 // Returns a process exit status.
 int install_desktop_entry();
 
 // The command that starts Stud: the AppImage file, or this binary.
 QString launcher_command();
 
-// `program` as one quoted Exec= argument, escaped as the desktop entry spec
-// has it.
+// `program` as one quoted Exec= argument, per the desktop entry spec.
 QString desktop_exec_quote(const QString& program);
 
 }  // namespace stud::ui

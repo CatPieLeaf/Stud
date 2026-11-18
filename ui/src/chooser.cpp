@@ -47,23 +47,17 @@ namespace stud::ui {
 
 namespace {
 
-// Stud's own studs, not Roblox's icons: red for Roblox, blue for Studio.
 QIcon icon_of(client::Product product) {
     return QIcon(product == client::Product::Studio ? QStringLiteral(":/studblu.png")
                                                     : QStringLiteral(":/studred.png"));
 }
 
-// The Stud title swaying a few degrees either way, never turning over, with
-// the spinning stud fixed to it in front, and now and then a white shine
-// across the title. The stud is drawn offscreen in a GL context of its own
-// and painted into the same picture, so it swings with the title smoothly,
-// at no whole-pixel steps.
+// The title swaying with the spinning stud fixed in front and an occasional shine.
+// The stud renders offscreen in its own GL context so it moves without pixel steps.
 class Emblem : public QWidget {
 public:
     Emblem(int cube, int title, int overlap, QWidget* parent) : QWidget(parent), cube_size_(cube) {
-        // One scale for everything this paints: the images are made at it
-        // and drawn at it, so they keep their size whatever the screen says
-        // later.
+        // One scale, fixed at creation, so later DPI changes don't resize the images.
         ratio_ = devicePixelRatioF();
         const qreal ratio = ratio_;
         logo_ = QPixmap(QStringLiteral(":/stud-title.png"))
@@ -73,9 +67,7 @@ public:
         logo_.setDevicePixelRatio(ratio);
         const QSizeF size = logo_.deviceIndependentSize();
 
-        // Where the stud's centre sits from the title's, before any sway.
         anchor_ = QPointF(-(size.width() / 2.0 + cube / 2.0 - overlap), 0.0);
-        // Room for the title's corners and the stud's travel as they tilt.
         const double tilt = kSwayDegrees * std::numbers::pi / 180.0;
         const double title_w = size.width() * std::cos(tilt) + size.height() * std::sin(tilt);
         const double title_h = size.width() * std::sin(tilt) + size.height() * std::cos(tilt);
@@ -85,7 +77,6 @@ public:
         setFixedSize(width, height);
         pivot_ = QPointF(width - title_w / 2.0 - 1, height / 2.0);
 
-        // The stud's own context, offscreen, and the image it renders into.
         QSurfaceFormat format;
         format.setAlphaBufferSize(8);
         format.setDepthBufferSize(24);
@@ -123,8 +114,7 @@ protected:
         QImage frame = logo_;
         const double t = seconds() - shine_start_;
         if (shining_ && t >= 0.0 && t <= kShineSeconds) {
-            // A white band with soft edges, kept to the title's own pixels and
-            // screened over them, sweeping from its top right to its bottom left.
+            // A soft white band, screened over the title's pixels, sweeping top right to bottom left.
             const QSizeF size = logo_.deviceIndependentSize();
             QImage band(frame.size(), QImage::Format_ARGB32_Premultiplied);
             band.setDevicePixelRatio(frame.devicePixelRatio());
@@ -134,11 +124,9 @@ protected:
                 shine.setRenderHint(QPainter::Antialiasing);
                 const double travel = size.width() + size.height();
                 const double along = t / kShineSeconds * (travel + 2 * size.height()) - size.height();
-                // The band runs top left to bottom right; it moves down and left.
                 const QPointF centre(size.width() - along * size.width() / travel,
                                      along * size.height() / travel);
                 const QPointF dir(size.height(), size.height());
-                // Wide and faint, then narrow and bright: soft edges.
                 for (const auto& [width, alpha] : {std::pair{kShineWidth, 70}, std::pair{kShineWidth * 0.6, 140},
                                                    std::pair{kShineWidth * 0.3, 230}}) {
                     shine.setPen(QPen(QColor(255, 255, 255, alpha), width, Qt::SolidLine, Qt::FlatCap));
@@ -157,7 +145,6 @@ protected:
         painter.rotate(angle_);
         const QSizeF size = logo_.deviceIndependentSize();
         painter.drawImage(QPointF(-size.width() / 2.0, -size.height() / 2.0), frame);
-        // The stud in front, carried by the same turn, at its anchor.
         if (!cube_image_.isNull()) {
             painter.drawImage(QPointF(anchor_.x() - cube_size_ / 2.0, anchor_.y() - cube_size_ / 2.0),
                               cube_image_);
@@ -169,7 +156,7 @@ private:
     static constexpr double kPeriodSeconds = 4.0;
     static constexpr double kShineSeconds = 0.8;
     static constexpr double kShineWidth = 10.0;
-    // A shine every few seconds, never on a beat.
+    // Randomised interval.
     static constexpr int kShineEveryMinMs = 4000;
     static constexpr int kShineEveryMaxMs = 10000;
 
@@ -188,7 +175,6 @@ private:
             shining_ = false;
             next_shine_ = next_shine_after(now);
         }
-        // This frame of the stud, offscreen.
         if (cube_state_ != nullptr && context_.makeCurrent(&surface_)) {
             fbo_->bind();
             cube_gl_draw(cube_state_, float(now), fbo_->width(), fbo_->height());
@@ -217,9 +203,7 @@ private:
     double next_shine_ = 0.0;
 };
 
-// Release notes as GitHub renders them. A text browser shows no image it
-// cannot read from disk, so this one downloads each picture the notes name
-// and lays the notes out again once it is in.
+// QTextBrowser can't show remote images, so each one is downloaded and the notes relaid out.
 class NotesView : public QTextBrowser {
 public:
     using QTextBrowser::QTextBrowser;
@@ -245,7 +229,6 @@ protected:
                 reply->deleteLater();
                 QImage image;
                 if (reply->error() != QNetworkReply::NoError || !image.loadFromData(reply->readAll())) return;
-                // Never wider than the notes themselves.
                 const int room = viewport()->width() - 2 * int(document()->documentMargin());
                 if (room > 0 && image.width() > room) image = image.scaledToWidth(room, Qt::SmoothTransformation);
                 images_.insert(url, image);
@@ -262,7 +245,6 @@ private:
     QSet<QUrl> requested_;
 };
 
-// The notes of the release this Stud is, from GitHub, in a window of their own.
 void show_release_notes(QWidget* parent) {
     auto* dialog = new QDialog(parent);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
@@ -282,7 +264,6 @@ void show_release_notes(QWidget* parent) {
     QNetworkRequest request(QUrl(QStringLiteral("https://api.github.com/repos/CatPieLeaf/Stud/releases/tags/%1")
                                      .arg(QStringLiteral(STUD_VERSION))));
     request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Stud/" STUD_VERSION));
-    // The notes as GitHub itself renders them, HTML and all.
     request.setRawHeader("Accept", "application/vnd.github.html+json");
     request.setTransferTimeout(10000);
     QNetworkReply* reply = net->get(request);
@@ -307,27 +288,21 @@ std::optional<client::Product> choose_product() {
     QDialog dialog;
     dialog.setWindowTitle(QStringLiteral("Stud"));
     auto* layout = new QVBoxLayout(&dialog);
-    // As large as its contents and no larger, like the loading window.
     layout->setSizeConstraint(QLayout::SetFixedSize);
 
-    // The spinning stud in front, the title tucked in behind its right side,
-    // swaying together.
     constexpr int kCube = 96;
     constexpr int kTitle = 160;
     constexpr int kOverlap = 18;
-    // Room kept between the title and the version.
     constexpr int kGap = 40;
     auto* header = new Emblem(kCube, kTitle, kOverlap, &dialog);
 
-    // Who, which version, and what is new in it: right beside the title.
     auto* about = new QVBoxLayout();
     about->addStretch();
     auto* by = new QLabel(QStringLiteral("By CatPieLeaf"), &dialog);
     auto* version = new QLabel(QStringLiteral("Version %1").arg(QStringLiteral(STUD_VERSION)), &dialog);
     by->setAlignment(Qt::AlignRight);
     version->setAlignment(Qt::AlignRight);
-    // A newer Stud out: the version turns red, underlined, and opens the
-    // latest release.
+    // A newer Stud exists: the version turns into a red link to it.
     const auto mark_outdated = [version] {
         version->setTextFormat(Qt::RichText);
         version->setOpenExternalLinks(false);
@@ -348,7 +323,6 @@ std::optional<client::Product> choose_product() {
     notes->setToolTip(QStringLiteral("Release notes"));
     QObject::connect(notes, &QPushButton::clicked, &dialog, [&dialog] { show_release_notes(&dialog); });
     auto* discord = discord_button(&dialog, /*labelled=*/false);
-    // Two icon buttons side by side, square and the same size.
     const int side = notes->sizeHint().height();
     notes->setFixedSize(side, side);
     discord->setFixedSize(side, side);
@@ -365,7 +339,6 @@ std::optional<client::Product> choose_product() {
     top->addLayout(about);
     layout->addLayout(top);
 
-    // A fun fact about Stud, a different one each time the page opens.
     QStringList quotes;
     QFile file(QStringLiteral(":/quotes.txt"));
     if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -373,7 +346,7 @@ std::optional<client::Product> choose_product() {
             if (!line.trimmed().isEmpty()) quotes.append(line.trimmed());
         }
     }
-    // One more on the GPU Stud runs on being NVIDIA's, as the About cube's.
+    // One extra fact with an NVIDIA GPU, like the About cube.
     {
         stud::config::StudSettings settings;
         try {
@@ -388,20 +361,19 @@ std::optional<client::Product> choose_product() {
         }
     }
     if (!quotes.isEmpty()) {
-        // Italic in the text itself, so no style can set it upright.
+        // Italic in the markup, so styles can't override it.
         auto* quote = new QLabel(
             QStringLiteral("<i>%1</i>").arg(quotes.at(QRandomGenerator::global()->bounded(quotes.size())).toHtmlEscaped()),
             &dialog);
         quote->setTextFormat(Qt::RichText);
         quote->setWordWrap(true);
         quote->setAlignment(Qt::AlignCenter);
-        // As wide as the header row, so a long line wraps instead of widening it.
+        // Fixed to the header's width so long lines wrap.
         quote->setFixedWidth(top->sizeHint().width());
         layout->addWidget(quote, 0, Qt::AlignHCenter);
     }
     layout->addSpacing(dialog.fontMetrics().height());
 
-    // Roblox Studio and Roblox, side by side.
     std::optional<client::Product> chosen;
     auto* buttons = new QHBoxLayout();
     buttons->setSpacing(dialog.fontMetrics().height() * 2);
@@ -427,7 +399,7 @@ std::optional<client::Product> choose_product() {
     QObject::connect(settings, &QPushButton::clicked, &dialog, [] { SettingsWindow::showSingleton(); });
     layout->addWidget(settings, 0, Qt::AlignHCenter);
 
-    // Not modal: Settings, opened from here, takes input beside it.
+    // Non-modal, so Settings opened from here takes input too.
     dialog.setWindowModality(Qt::NonModal);
     QEventLoop loop;
     QObject::connect(&dialog, &QDialog::finished, &loop, &QEventLoop::quit);

@@ -76,8 +76,7 @@
 
 #include <unistd.h>
 
-// Defined in main.cpp, the session this window may have to stop and
-// put back.
+// Defined in main.cpp.
 namespace stud::ui {
 void terminate_stud_session();
 bool stud_session_is_running();
@@ -87,10 +86,9 @@ void relaunch_stud();
 namespace stud::ui {
 
 namespace {
-// A button's icon, by its freedesktop name: one colour, following the scheme.
+// A monochrome freedesktop icon that follows the colour scheme.
 QIcon themed(const char* name, QStyle::StandardPixmap fallback) { return mono_icon(name, fallback); }
 
-// Selects the entry whose data is `value`, or the first one.
 void select_data(QComboBox* combo, const std::string& value) {
     const int index = combo->findData(QString::fromStdString(value));
     combo->setCurrentIndex(index >= 0 ? index : 0);
@@ -105,8 +103,6 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     setWindowTitle("Stud Settings");
 
     auto* layout = new QVBoxLayout(this);
-    // Categories on the left, each a page on the right; a category with
-    // several parts shows them as tabs along its top.
     auto* body = new QHBoxLayout();
     layout->addLayout(body, 1);
     auto* categories = new QListWidget(this);
@@ -116,8 +112,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     body->addWidget(pages, 1);
     connect(categories, &QListWidget::currentRowChanged, pages, &QStackedWidget::setCurrentIndex);
 
-    // A page scrolls rather than stretching the window: controls sit at the
-    // top as a plain vertical list.
+    // Pages scroll instead of stretching the window.
     const auto scroll_page = [](QWidget*& area) {
         auto* scroll = new QScrollArea();
         scroll->setWidgetResizable(true);
@@ -135,7 +130,6 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         pages->addWidget(area);
         return page;
     };
-    // A category of several parts: one scrolling page each, as tabs.
     auto add_parts = [&](const QString& title, const QStringList& parts) {
         auto* tabs = new QTabWidget();
         std::vector<QVBoxLayout*> layouts;
@@ -179,8 +173,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     titleBarCombo_->addItem("Linux native title bar", QStringLiteral("native"));
     general->addWidget(titleBarCombo_);
 
-    // A choice only on a Wayland desktop that also runs XWayland: anywhere
-    // else there is one way to open a window.
+    // Only offered on Wayland desktops that also run XWayland.
     auto* displayBackendLabel = new QLabel("Display server", this);
     general->addWidget(displayBackendLabel);
     displayBackendCombo_ = new QComboBox(this);
@@ -271,9 +264,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     const auto scaling = [this] { upscalerCombo_->setEnabled(renderScaleSpin_->value() < 100); };
     connect(renderScaleSpin_, qOverload<int>(&QSpinBox::valueChanged), this, scaling);
 
-    // Frame rate while Roblox is in the background: hidden (minimised,
-    // another workspace, covered) or merely unfocused. One step past the top
-    // reads as Unlimited.
+    // Frame rate while Roblox is hidden or unfocused; one step past the top is Unlimited.
     backgroundFpsLabel_ = new QLabel(this);
     graphics->addWidget(backgroundFpsLabel_);
     backgroundFpsSlider_ = new QSlider(Qt::Horizontal, this);
@@ -304,8 +295,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     discord->addStretch();
 
     // ---- Customizations ----------------------------------------------------------
-    // Files over Roblox's own content, applied at every launch. A customization folder
-    // mirrors the content tree, so Bloxstrap and Froststrap customizations drop in.
+    // Mirrors Roblox's content tree, so Bloxstrap and Froststrap folders drop in.
     auto* customizeTab = add_tab("Customize");
     auto* folders = new QHBoxLayout();
     for (const auto product : {client::Product::Player, client::Product::Studio}) {
@@ -324,7 +314,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     struct Row {
         customization::Part part;
         const char* label;
-        const char* filter;  // nullptr: no file to choose
+        const char* filter;  // nullptr when there is no file to choose
         bool colour;
     };
     const Row rows[] = {
@@ -395,8 +385,6 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     customizeTab->addStretch();
 
     // ---- FFlags --------------------------------------------------------
-    // flags.json in Stud's config directory, as JSON: written into the
-    // client's ClientAppSettings.json at every launch.
     buildRobloxTab(add_tab("Roblox"));
     buildHistoryTab(add_tab("History"));
     {
@@ -411,7 +399,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     auto* about = add_tab("About");
     auto* cube = new CubeView(this);
     cube->setFixedSize(128, 128);
-    // Ten clicks on the cube, on the GPU picked above being NVIDIA's.
+    // Ten clicks on the cube, with an NVIDIA GPU selected.
     cube->on_tenth_click = [this] {
         if (gpuCombo_->currentData(Qt::UserRole + 1).toUInt() != kVendorNvidia) return;
         send_notification(QStringLiteral("Stud"), QString::fromLatin1(kNvidiaNote));
@@ -446,21 +434,14 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
 
     // ---- Save, shared by every tab -------------------------------------
     auto* buttonRow = new QHBoxLayout();
-    // Restart, for comparing two settings without a trip through the tray:
-    // save, restart, look, repeat. Only meaningful while a session is
-    // actually running, so it appears only then, there is nothing to
-    // restart otherwise, and Save already starts one when it has to.
+    // Shown only while a session runs, to compare settings quickly.
     restartButton_ = new QPushButton(this);
     paintRestartIcon();
     restartButton_->setToolTip("Save and restart Stud");
-    // Icon only: the row's width belongs to Save, and a refresh glyph says
-    // this on its own. With no glyph anywhere, paintRestartIcon() leaves a
-    // word instead, and a word needs room.
+    // Icon only; paintRestartIcon() falls back to a word when there is no glyph.
     if (!restartButton_->icon().isNull()) {
         restartButton_->setFixedWidth(36);
     }
-    // Only when there is a session to restart. Opened from the desktop
-    // entry with nothing running, Save is the whole story.
     restartButton_->setVisible(stud_session_is_running());
     buttonRow->addWidget(restartButton_);
     connect(restartButton_, &QPushButton::clicked, this, &SettingsWindow::onRestartClicked);
@@ -472,8 +453,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     connect(saveButton, &QPushButton::clicked, this, &SettingsWindow::onSaveClicked);
 
     statusLabel_ = new QLabel(this);
-    // The status line doubles as where an available update is announced,
-    // so it has to render a link and open it.
+    // Also announces updates, so it renders and opens links.
     statusLabel_->setTextFormat(Qt::RichText);
     statusLabel_->setTextInteractionFlags(Qt::TextBrowserInteraction);
     statusLabel_->setOpenExternalLinks(false);
@@ -486,27 +466,18 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     });
     layout->addWidget(statusLabel_);
 
-    // Ask GitHub whether there is a newer Stud. The tray may have asked already, in which
-    // case this costs nothing and the answer is remembered; see UpdateCheck.
     connect(UpdateCheck::instance(), &UpdateCheck::updateFound, this,
             [this] { showIdleStatus(); });
     UpdateCheck::start();
 
     loadFromDisk();
     installResets();
-    // Ask now, rather than only on the signal. The tray starts the same
-    // check at launch, so by the time this window is opened the answer is
-    // usually already known and `updateFound` has long since fired,
-    // connecting to it and waiting meant Settings never showed the notice
-    // at all.
+    // The tray's check usually finished before this window opened, so the signal
+    // has already fired; ask for the remembered answer now.
     showIdleStatus();
 }
 
-// Right-click a control to put it back to its default.
-//
-// The defaults come from a default-constructed StudSettings, which is
-// where they are already defined, writing them out again here would be a
-// second copy to drift out of step with the first.
+// Right-click a control to reset it to the default of a fresh StudSettings.
 void SettingsWindow::installResets() {
     const stud::config::StudSettings d;
     auto add = [this](QWidget* widget, std::function<void()> reset) {
@@ -516,8 +487,7 @@ void SettingsWindow::installResets() {
     };
 
     add(gpuCombo_, [this] {
-        // The default is whichever device Stud would have picked on its
-        // own, not simply the first row.
+        // The device Stud would pick on its own, not the first row.
         const int index = gpuCombo_->findData(default_gpu_index());
         gpuCombo_->setCurrentIndex(index >= 0 ? index : 0);
     });
@@ -545,15 +515,13 @@ void SettingsWindow::installResets() {
 }
 
 bool SettingsWindow::eventFilter(QObject* watched, QEvent* event) {
-    // The context-menu event rather than a raw right-button press: it is
-    // what a right-click means on every platform, and it arrives whether
-    // the pointer or the keyboard asked for it.
+    // ContextMenu, so keyboard-triggered menus work too.
     if (event->type() == QEvent::ContextMenu) {
         const auto reset = resets_.constFind(watched);
         if (reset != resets_.constEnd()) {
             (*reset)();
             statusLabel_->setText("Reset to default. Save to keep it.");
-            return true;  // no empty context menu behind it
+            return true;
         }
     }
     return QWidget::eventFilter(watched, event);
@@ -563,8 +531,7 @@ namespace {
 
 QString flags_path() { return QString::fromStdString(stud::config::default_flag_overrides_path()); }
 
-// The editor's text as a JSON object; an empty editor is no flags. Empty
-// with `error` set when it is not one.
+// An empty editor means no flags; nullopt with `error` set when it isn't a JSON object.
 std::optional<QJsonObject> parse_flags(const QString& text, QString* error) {
     if (text.trimmed().isEmpty()) return QJsonObject();
     QJsonParseError parse{};
@@ -587,7 +554,7 @@ QString format_flags(const QJsonObject& flags) {
 
 }  // namespace
 
-// Unlimited is stored as 0 and lives one step past the top of the slider.
+// Unlimited is stored as 0, one step past the slider's top.
 void SettingsWindow::setBackgroundFps(int fps) {
     const int position =
         fps <= stud::config::kBackgroundFpsNoLimit ? stud::config::kBackgroundFpsUnlimited + 1 : fps;
@@ -601,9 +568,7 @@ void SettingsWindow::onBackgroundFpsChanged(int value) {
                                      : QStringLiteral("Background frame rate: %1 FPS").arg(value));
 }
 
-// Presets over the editor's JSON, profiles, and what the client ignores. The
-// editor stays the one source: a preset rewrites the JSON, and the JSON sets
-// the presets.
+// The JSON editor is the single source: presets rewrite it, and it sets the presets.
 void SettingsWindow::buildFlagsTab(QVBoxLayout* presets_tab, QVBoxLayout* tab) {
     flagsEdit_ = new QPlainTextEdit(this);
     flagsEdit_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
@@ -662,7 +627,6 @@ void SettingsWindow::buildFlagsTab(QVBoxLayout* presets_tab, QVBoxLayout* tab) {
     presets_tab->addLayout(presets);
     presets_tab->addStretch();
 
-    // Profiles: named sets of these flags.
     auto* profiles = new QHBoxLayout();
     auto* profileBox = new QComboBox(this);
     profileBox->addItems(fflags::profiles());
@@ -744,8 +708,8 @@ void SettingsWindow::buildFlagsTab(QVBoxLayout* presets_tab, QVBoxLayout* tab) {
     });
 }
 
-// Roblox's own settings, the ones its in-game menu saves, edited in its file
-// in the prefix. Graphics quality is not among them: Stud leaves it to Roblox.
+// Roblox's in-game settings, edited in its file in the prefix. Graphics quality
+// is deliberately left to Roblox.
 void SettingsWindow::buildRobloxTab(QVBoxLayout* tab) {
     enum class Kind { Toggle, Fraction, Number };
     struct Row {
@@ -773,7 +737,6 @@ void SettingsWindow::buildRobloxTab(QVBoxLayout* tab) {
     tab->addWidget(note);
     auto* grid = new QGridLayout();
     tab->addLayout(grid);
-    // Each row's control: filled from the file's text, and read back as it.
     struct Control {
         const char* name;
         QWidget* widget;
@@ -791,7 +754,7 @@ void SettingsWindow::buildRobloxTab(QVBoxLayout* tab) {
             c.get = [box] { return box->isChecked() ? QStringLiteral("true") : QStringLiteral("false"); };
             grid->addWidget(box, line, 0, 1, 2);
         } else if (row.kind == Kind::Fraction) {
-            // Stored as 0 to 1; shown as a percentage.
+            // Stored as 0 to 1, shown as a percentage.
             auto* slider = new QSlider(Qt::Horizontal, this);
             slider->setRange(0, 100);
             auto* value = new QLabel(this);
@@ -832,7 +795,7 @@ void SettingsWindow::buildRobloxTab(QVBoxLayout* tab) {
     tab->addLayout(buttons);
     tab->addStretch();
 
-    // A key the file lacks stays disabled: only what Roblox wrote is changed.
+    // Keys missing from the file stay disabled: only what Roblox wrote is changed.
     const auto load = [controls, status, save] {
         const QString path = roblox_settings::player_file();
         QFile in(path);
@@ -869,7 +832,6 @@ void SettingsWindow::buildRobloxTab(QVBoxLayout* tab) {
 
 namespace {
 
-// How much a folder holds, for the clear buttons.
 qint64 folder_size(const QString& path) {
     qint64 total = 0;
     QDirIterator it(path, QDir::Files | QDir::Hidden | QDir::System | QDir::NoSymLinks,
@@ -883,7 +845,6 @@ qint64 folder_size(const QString& path) {
 
 }  // namespace
 
-// Logs for a bug report, and clearing what Stud keeps.
 void SettingsWindow::buildStudioTab(QVBoxLayout* tab) {
     tab->addWidget(new QLabel("<b>FastFlags</b>", this));
     auto* note = new QLabel(
@@ -1068,7 +1029,7 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
         for (const auto& reset : resets_) reset();
         status->setText(QStringLiteral("Every setting is back to its default. Save to keep them."));
     });
-    // None of these while Roblox runs: its client, prefix and web views are in use.
+    // Refused while Roblox runs: its client, prefix and web views are in use.
     const auto refuse_while_running = [this] {
         if (!stud_session_is_running()) return false;
         QMessageBox::information(this, QStringLiteral("Stud"),
@@ -1129,8 +1090,6 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
     });
 }
 
-// The games played, most recent first, with the time played in each: join
-// one again, or give it a shortcut in the application menu.
 void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
     historyGamesCheck_ = new QCheckBox("Track games", this);
     historyGamesCheck_->setToolTip("Keeps each game you play here, with the time played.");
@@ -1162,7 +1121,6 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
             item->setText(2, QDateTime::fromSecsSinceEpoch(e.last_played).toString(when));
             item->setData(0, Qt::UserRole, e.place);
             item->setData(0, Qt::UserRole + 1, e.icon);
-            // Each server joined in it, most recent first; Join rejoins it.
             for (const history::Server& s : e.servers) {
                 auto* server = new QTreeWidgetItem(item);
                 server->setText(0, s.location.isEmpty() ? QStringLiteral("Server %1").arg(s.job.left(8))
@@ -1205,7 +1163,6 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
         history::clear();
         refresh();
     });
-    // A game opens the game; a server under it rejoins that server.
     const auto update_join = [list, join] {
         const QTreeWidgetItem* item = list->currentItem();
         const bool server = item != nullptr && item->parent() != nullptr;
@@ -1226,9 +1183,8 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
         const QString place = list->currentItem()->data(0, Qt::UserRole).toString();
         const QString name = list->currentItem()->text(0);
         const QString icon_url = list->currentItem()->data(0, Qt::UserRole + 1).toString();
-        // The Flatpak sandbox cannot write the desktop's application menu,
-        // and its own path to Stud means nothing outside it: the desktop
-        // portal adds the launcher instead, once the user confirms.
+        // Flatpak can't write the desktop's menu, so the portal adds the launcher
+        // after the user confirms.
         if (QFileInfo::exists(QStringLiteral("/.flatpak-info"))) {
             QPointer<QLabel> status = statusLabel_;
             const auto ask = [status, place, name](const QByteArray& image_file) {
@@ -1251,7 +1207,7 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
                 ask({});
                 return;
             }
-            // The game's icon first: the portal shows it as it asks.
+            // The portal shows the game's icon while asking.
             auto* net = new QNetworkAccessManager(this);
             QNetworkRequest request{QUrl(icon_url)};
             request.setTransferTimeout(10000);
@@ -1283,7 +1239,6 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
                        .toUtf8());
         file.close();
         statusLabel_->setText(QStringLiteral("Added %1 to the application menu.").arg(clean_name).toHtmlEscaped());
-        // The game's icon, fetched once for the shortcut.
         if (!icon_url.isEmpty() && !QFileInfo::exists(icon)) {
             auto* net = new QNetworkAccessManager(this);
             QNetworkReply* reply = net->get(QNetworkRequest(QUrl(icon_url)));
@@ -1299,8 +1254,7 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
     });
 }
 
-// Another bootstrapper's folder: its Modifications become Stud's customizations, and
-// the FastFlags it kept there join the FFlags tab.
+// Imports another bootstrapper's Modifications and FastFlags.
 void SettingsWindow::onImportBootstrapperClicked() {
     const QString dir = QFileDialog::getExistingDirectory(
         this, "Choose the Bloxstrap, Fishstrap or Froststrap folder");
@@ -1322,7 +1276,6 @@ void SettingsWindow::onImportBootstrapperClicked() {
         QFile::remove(to);
         if (QFile::copy(file, to)) ++copied;
     }
-    // Their FastFlags, merged over the editor's.
     QFile flags_file(source + QStringLiteral("/ClientSettings/ClientAppSettings.json"));
     int flags = 0;
     if (flags_file.open(QIODevice::ReadOnly)) {
@@ -1411,8 +1364,6 @@ void SettingsWindow::loadFromDisk() {
 
 namespace {
 
-// One well-known name per user session, beside the render socket Stud
-// already keeps there.
 QString settings_socket_name() {
     return QStringLiteral("stud-settings-%1").arg(::getuid());
 }
@@ -1447,10 +1398,8 @@ bool SettingsWindow::handOffToRunningInstance() {
 void SettingsWindow::listenForOpenRequests() {
     if (g_open_server != nullptr) return;
     g_open_server = new QLocalServer(qApp);
-    // A server socket outlives a process that was killed rather than
-    // closed, and QLocalServer will not bind over one. Removing it is
-    // safe here: anything still listening on it would have answered the
-    // hand-off attempt that ran first.
+    // A killed process leaves its socket behind and QLocalServer won't bind over it.
+    // Anything still listening would have answered the hand-off attempt above.
     QLocalServer::removeServer(settings_socket_name());
     if (!g_open_server->listen(settings_socket_name())) {
         std::fprintf(stderr, "stud: could not listen for settings requests: %s\n",
@@ -1473,18 +1422,9 @@ void SettingsWindow::setStatusMessage(const QString& text) {
     statusLabel_->setText(text.toHtmlEscaped());
 }
 
-// What the status line says when it has nothing else to say: either
-// nothing, or that this Stud is out of date.
-//
-// It lives here rather than in a banner of its own because this is the
-// one line in the window that is already about "what just happened", and
-// an update is news of exactly that kind. Anything the user actually does
-// saving, restarting, replaces it, and it comes back when that
-// message is cleared.
+// The status line when idle: empty, or an update notice.
 void SettingsWindow::showIdleStatus() {
-    // Blue and underlined, stated rather than inherited: a link's default
-    // colour comes from the palette and is not dependable across themes,
-    // and this one has to read as a link in both.
+    // Explicit colour: the palette's link colour isn't readable in every theme.
     const QString link = QStringLiteral(
         "<a href=\"%1\" style=\"color:#2f7fd6; text-decoration:underline;\">%2</a>");
     QStringList lines;
@@ -1494,42 +1434,28 @@ void SettingsWindow::showIdleStatus() {
     statusLabel_->setText(lines.join(QStringLiteral("<br>")));
 }
 
-// Save, stop the running session, start it again. The whole point is the
-// A/B loop: change a setting, see it, change it back.
-//
-// Not a plain restart: settings are read when a session STARTS, so
-// restarting without saving would relaunch the old ones and look like the
-// change did nothing.
+// Save, stop the session and start it again. Settings are read at session start.
 void SettingsWindow::paintRestartIcon() {
     restartButton_->setIcon(mono_icon("view-refresh", QStyle::SP_BrowserReload));
-    // Nothing to draw anywhere: a word beats an empty button.
     if (restartButton_->icon().isNull()) restartButton_->setText(QStringLiteral("Restart"));
 }
 
 void SettingsWindow::onRestartClicked() {
-    // Save first, through the ordinary path, settings are read when a
-    // session STARTS, so restarting without saving would relaunch the old
-    // ones and look like the change did nothing.
-    // A save that failed says why, and nothing restarts on the old settings.
+    // Save first; a failed save doesn't restart with the old settings.
     if (!onSaveClicked()) return;
     if (!stud_session_is_running()) {
-        // Nothing running: the next launch reads what was saved.
         statusLabel_->setText("Settings saved.");
         return;
     }
     statusLabel_->setText("Restarting Stud...");
-    // Let the label paint: stopping the session blocks this thread for a
-    // moment.
+    // Let the label paint before stopping the session blocks this thread.
     QApplication::processEvents();
     terminate_stud_session();
-    // As a new process, the way closing and reopening Stud does it; see
-    // relaunch_stud().
     relaunch_stud();
 }
 
 bool SettingsWindow::onSaveClicked() {
-    // The flags first: a flags.json the client cannot read is refused
-    // before anything is written.
+    // A flags.json the client can't read is refused before anything is written.
     QString flags_error;
     const auto flags = parse_flags(flagsEdit_->toPlainText(), &flags_error);
     if (!flags) {
@@ -1538,8 +1464,7 @@ bool SettingsWindow::onSaveClicked() {
                                   .toHtmlEscaped());
         return false;
     }
-    // From what is on disk: the file may hold keys this window does not
-    // show. A file that cannot be read is not overwritten at all.
+    // Start from the file on disk: it may hold keys this window doesn't show.
     stud::config::StudSettings settings;
     try {
         settings = stud::config::load_settings(stud::config::default_config_path());

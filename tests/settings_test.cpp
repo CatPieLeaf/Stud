@@ -51,8 +51,7 @@ int main(int argc, char** argv) {
 
     const std::string path = dir + "/config.json";
 
-    // Every field away from its default: one left there proves nothing, since
-    // losing it on the way through would read back the same.
+    // Every field off its default, so a field lost in the round trip shows.
     stud::config::StudSettings settings;
     settings.gpu.device_index = 2;
     settings.gpu.device_name = "Test GPU 9000";
@@ -104,8 +103,7 @@ int main(int argc, char** argv) {
           "games and servers are recorded by default");
     check(loaded.cleaner_days == 7, "the cleaner's age round-trips");
 
-    // Stud 1.x's keys are removed on save rather than carried forward: a file
-    // that still lists them reads as if they do something.
+    // Stud 1.x's keys are dropped on save.
     std::ofstream(path, std::ios::trunc)
         << R"({"apkPath":"/home/user/Downloads/roblox.apk","hidpi":true,)"
            R"("graphicsMode":"opengl","backgroundFps":241,"menuBar":"strip",)"
@@ -126,9 +124,8 @@ int main(int argc, char** argv) {
               "save_settings writes its own keys into the same file");
     }
 
-    // A Stud 1.x config.json: what carried over to 2.0 is taken under its old
-    // name, what 2.0 cannot use is ignored rather than refused, and the old
-    // keys are gone after a save.
+    // A Stud 1.x config.json: kept settings read under their old names, the rest
+    // ignored, old keys gone after a save.
     {
         const std::string v1 = dir + "/v1.json";
         std::ofstream(v1, std::ios::trunc) << R"({"graphicsMode": "opengl", "upscaling": true,
@@ -153,7 +150,6 @@ int main(int argc, char** argv) {
         check(loaded.renderer == "opengl", "a 2.0 value wins over the 1.x name for it");
     }
 
-    // A wrong value is an error, not a silent default.
     check(throws_on(dir + "/bad.json", "not valid json {{{"), "malformed JSON throws");
     check(throws_on(dir + "/bad_title.json", R"({"titleBar": "dock"})"),
           "an unknown title bar value throws");

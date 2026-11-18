@@ -1,26 +1,9 @@
 #pragma once
 
-// The spinning cube the render smoke test draws.
-//
-// Ported from c2d7fa's opengl-cube (https://github.com/c2d7fa/opengl-cube),
-// which is dedicated to the public domain under CC0-1.0. The geometry,
-// the vertex colours, the column-major matrix helpers and the projection
-// are that project's; the credit is kept because it is the decent thing
-// to do, not because CC0 asks for it.
-//
-// Two real changes were needed. The original targets desktop OpenGL 4.5
-// through GLFW and GLEW; Stud's render path is GLES2 on EGL, which this
-// tool already sets up, so the shaders are GLSL ES 1.00 (attributes and
-// varyings rather than layout-qualified in/out) and there is no vertex
-// array object, GLES2 has none, so the attribute pointers are bound
-// per frame instead.
-//
-// Why a cube rather than the colour-cycling clear this replaces: a clear
-// proves the surface presents, and nothing more. A cube with depth
-// testing, an index buffer, a shader program and a per-frame uniform
-// exercises the parts of the pipeline that actually break, which is
-// the whole point of a smoke test that exists to answer "is it the
-// machine, the driver or Stud?".
+// The spinning cube of the GL smoke test, ported from c2d7fa's opengl-cube (CC0-1.0).
+// Ported to GLES2: GLSL ES 1.00 shaders and no vertex array object, so attribute
+// pointers are bound per frame. A cube with depth testing, an index buffer and a
+// per-frame uniform exercises far more of the pipeline than a coloured clear.
 
 #include <GLES2/gl2.h>
 
@@ -29,8 +12,7 @@
 
 namespace stud::tools {
 
-// The GLES2 entry points the cube needs, resolved by the caller the same
-// way it resolves every other one.
+// Resolved by the caller like every other entry point.
 struct CubeGl {
     void (*Enable)(GLenum);
     void (*Viewport)(GLint, GLint, GLsizei, GLsizei);
@@ -56,8 +38,7 @@ struct CubeGl {
     void (*EnableVertexAttribArray)(GLuint);
     void (*UniformMatrix4fv)(GLint, GLsizei, GLboolean, const GLfloat*);
     void (*DrawElements)(GLenum, GLsizei, GLenum, const void*);
-    // Only for a textured cube; a caller that leaves them null gets the
-    // original's plain colours.
+    // Only for a textured cube; null keeps plain colours.
     void (*GenTextures)(GLsizei, GLuint*);
     void (*BindTexture)(GLenum, GLuint);
     void (*TexImage2D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum,
@@ -66,7 +47,7 @@ struct CubeGl {
     void (*Uniform1i)(GLint, GLint);
 };
 
-// Column-major, so it is handed to glUniformMatrix4fv as-is.
+// Column-major, as glUniformMatrix4fv takes it.
 struct Mat4 {
     float m[16];
 };
@@ -101,9 +82,7 @@ inline Mat4 mat4_rotate_y(float t) {
                   0, 1}};
 }
 
-// The original's own projection, with the aspect ratio threaded through
-// so the cube is not stretched by a non-square window (the original is
-// always square).
+// The original's projection, with an aspect ratio so non-square windows don't stretch it.
 inline Mat4 mat4_perspective(float aspect) {
     const float r = 0.5f * (aspect > 0.0f ? aspect : 1.0f);
     const float t = 0.5f;
@@ -115,9 +94,8 @@ inline Mat4 mat4_perspective(float aspect) {
 
 class SpinningCube {
   public:
-    // `face`, when given, is a `face_size` x `face_size` luminance image put
-    // on every side: a shading map, mid-grey where it leaves the colour as
-    // it is, which is how the stud texture Roblox ships works.
+    // `face`: a luminance image on every side, mid-grey leaving the colour unchanged,
+    // as Roblox's stud texture works.
     bool init(const CubeGl& gl, const unsigned char* face = nullptr, int face_size = 0) {
         static const char* kVertex =
             "attribute vec3 pos;\n"
@@ -132,9 +110,7 @@ class SpinningCube {
             "  uv = vertex_uv;\n"
             "}\n";
         static const char* kFragment =
-            // GLES requires a default float precision and desktop GL's
-            // older GLSL rejects the statement, so it is given only where
-            // GL_ES says the compiler is a GLES one.
+            // GLES needs a default float precision; older desktop GLSL rejects it.
             "#ifdef GL_ES\n"
             "precision mediump float;\n"
             "#endif\n"
@@ -143,8 +119,7 @@ class SpinningCube {
             "uniform sampler2D face;\n"
             "uniform bool textured;\n"
             "void main() {\n"
-            // Overlay: the stud over the colour, multiplied where the
-            // colour is dark and screened where it is light.
+            // Overlay blend: multiply where dark, screen where light.
             "  vec3 t = vec3(texture2D(face, uv).r);\n"
             "  vec3 lo = 2.0 * color * t;\n"
             "  vec3 hi = 1.0 - 2.0 * (1.0 - color) * (1.0 - t);\n"
@@ -175,8 +150,6 @@ class SpinningCube {
         uniform_transform_ = gl.GetUniformLocation(program_, "transform");
         uniform_textured_ = gl.GetUniformLocation(program_, "textured");
 
-        // The original's own cube: eight corners, one colour each, and
-        // twelve triangles indexing them.
         static const float kCorners[] = {
             0.5f,  0.5f,  0.5f,  -0.5f, 0.5f,  0.5f,  -0.5f, -0.5f, 0.5f,  0.5f,  -0.5f, 0.5f,
             0.5f,  0.5f,  -0.5f, -0.5f, 0.5f,  -0.5f, -0.5f, -0.5f, -0.5f, 0.5f,  -0.5f, -0.5f,
@@ -185,9 +158,7 @@ class SpinningCube {
             1.0f, 0.4f, 0.6f, 1.0f, 0.9f, 0.2f, 0.7f, 0.3f, 0.8f, 0.5f, 0.3f, 1.0f,
             0.2f, 0.6f, 1.0f, 0.6f, 1.0f, 0.4f, 0.6f, 0.8f, 0.8f, 0.4f, 0.8f, 0.8f,
         };
-        // The same twelve triangles, as six quads of corner indices. A face
-        // needs corners of its own to carry its own texture coordinates,
-        // so each quad becomes four vertices, keeping the corners' colours.
+        // Each face gets its own four vertices to carry its texture coordinates.
         static const int kFaces[6][4] = {
             {0, 1, 2, 3},  // front
             {0, 3, 7, 4},  // right
@@ -196,7 +167,7 @@ class SpinningCube {
             {4, 7, 6, 5},  // back
             {5, 1, 0, 4},  // top
         };
-        // Image row 0 is the top of the stud, and GL puts it at t = 0.
+        // Image row 0 is the top of the stud, at t = 0.
         static const float kUv[4][2] = {{1, 0}, {0, 0}, {0, 1}, {1, 1}};
         float vertices[24 * 3];
         float colors[24 * 3];
@@ -238,9 +209,7 @@ class SpinningCube {
         return true;
     }
 
-    // The texture on every face, `face_size` square, one byte per texel; null
-    // for plain colours. Callable again at any time, with the cube's context
-    // current, to put a texture on or replace it.
+    // Null for plain colours. Callable again, with the context current, to replace it.
     void set_face(const CubeGl& gl, const unsigned char* face, int face_size) {
         const bool can = gl.GenTextures != nullptr && gl.BindTexture != nullptr &&
                          gl.TexImage2D != nullptr && gl.TexParameteri != nullptr &&
@@ -261,10 +230,8 @@ class SpinningCube {
         gl.Uniform1i(gl.GetUniformLocation(program_, "face"), 0);
     }
 
-    // seconds drives the spin; one turn every four seconds, as in the
-    // original. `distance` is how far back the camera sits, the
-    // original's 3 by default; closer fills more of the drawable. A
-    // transparent clear leaves only the cube, for drawing over a window.
+    // One turn every four seconds. `distance` is the camera distance (3 by default);
+    // a transparent clear leaves only the cube.
     void draw(const CubeGl& gl, float seconds, int width, int height, float distance = 3.0f,
               bool transparent = false) {
         const float pi = 3.141593f;

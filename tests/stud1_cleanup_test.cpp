@@ -1,5 +1,4 @@
-// Stud 1.x's leftovers go at the first 2.0 start; Stud 2.0's own files and
-// what carries over from 1.x stay. See ui/src/stud1_cleanup.h.
+// Stud 1.x's leftovers go on 2.0's first start; 2.0's files and carried-over ones stay.
 
 #include "stud1_cleanup.h"
 
@@ -45,8 +44,7 @@ int main() {
     write(cache + "/assets/android/textures/studs.dds", 300);
     write(cache + "/engine/store", 50);
     write(cache + "/textures/v/a", 40);
-    // 1.x linked part of its files directory out to the cache. What a link
-    // points at outside the swept directories must survive.
+    // A link target outside the swept directories must survive.
     write(elsewhere + "/keep", 7);
     QFile::link(elsewhere, data + "/files/linked");
 

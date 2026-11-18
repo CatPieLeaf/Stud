@@ -20,55 +20,38 @@ class QSpinBox;
 
 namespace stud::ui {
 
-// Stud's settings window, a front-end over stud-config's JSON file: loads on
-// construction, writes on Save.
+// Loads stud-config's JSON file on construction and writes it on Save.
 class SettingsWindow : public QWidget {
     Q_OBJECT
 
 public:
     explicit SettingsWindow(QWidget* parent = nullptr);
 
-    // The one settings window, wherever the request came from.
-    //
-    // Two of these can disagree, both loaded the same file, both write
-    // the whole of it on Save, so whichever is saved last silently undoes
-    // the other. So there is exactly one: in this process, and (see below) across
-    // processes too.
+    // Only one exists, across processes too: two windows would each save the whole
+    // file and the last one would silently undo the other.
     static SettingsWindow* showSingleton(const QString& status = QString());
 
-    // The desktop entry's Settings action starts a new stud-ui, which
-    // knows nothing about the one already running the session. If that
-    // one is listening, hand the request over and let it raise its own
-    // window, opening Settings from the shortcut then behaves exactly
-    // like opening it from the tray, because it IS that window.
-    //
-    // True when the request was handed off and this process should exit.
+    // The desktop entry's Settings action starts a new stud-ui; this hands the
+    // request to the running one. True when handed off and this process should exit.
     static bool handOffToRunningInstance();
 
-    // Listen for those requests. Called by a stud-ui that is staying
-    // alive (the tray) and by a settings-only one that found nobody to
-    // hand off to.
     static void listenForOpenRequests();
 
-    // Says why this window opened, above the Save button, when Stud
-    // opened it rather than the user asking for it.
+    // Explains why Stud opened this window, above Save.
     void setStatusMessage(const QString& text);
 
 private:
-    // The status line at rest: empty, or the update notice.
     void showIdleStatus();
 
 private slots:
     bool onSaveClicked();
     void onRestartClicked();
-    // Merges a JSON file's flags into the FFlags editor.
     void onImportFlagsClicked();
     void onImportBootstrapperClicked();
     void onBackgroundFpsChanged(int value);
 
 protected:
-    // Right-click resets the control under the pointer; see
-    // installResets().
+    // Right-click resets the control under the pointer.
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
@@ -103,20 +86,15 @@ private:
     void buildStudioTab(QVBoxLayout* tab);
     QPlainTextEdit* flagsEdit_;
     QLabel* flagsWarning_;
-    // Each preset's control, set from the editor's JSON.
     std::vector<std::function<void(const QJsonObject&)>> flagRefresh_;
     void buildFlagsTab(QVBoxLayout* presets_tab, QVBoxLayout* tab);
     QPushButton* restartButton_;
-    // Applies the palette's button-text colour to the restart glyph. Also
-    // called on a palette change, hence keeping it around.
+    // Recoloured on palette changes.
     void paintRestartIcon();
 
     QLabel* statusLabel_;
 
-    // What each control's default is, as a closure that applies it. Keyed
-    // by the widget, so the event filter can look up whatever was
-    // right-clicked. Every value comes from a default-constructed
-    // StudSettings rather than being written down a second time.
+    // Reset actions keyed by widget, with defaults from a fresh StudSettings.
     QHash<QObject*, std::function<void()>> resets_;
 };
 

@@ -1,14 +1,8 @@
 #!/bin/sh
-# Points the Flatpak manifest's Rosemary module at the head of the branch
-# CMakeLists.txt builds, and regenerates its offline Cargo sources from that
-# commit's Cargo.lock. A Flatpak build has no network, so every crate and git
-# dependency Rosemary needs is listed in rosemary-cargo-sources.json.
-#
-#     tools/update-flatpak-rosemary.sh WORKDIR
-#
-# Leaves the checkout in WORKDIR/rosemary, for the shader check, and prints
-# the commit. The release workflow runs it before every Flatpak build, and
-# after a release so main carries what was released.
+# Usage: tools/update-flatpak-rosemary.sh WORKDIR
+# Points the Flatpak manifest at the head of Rosemary's branch and regenerates the
+# offline Cargo sources (Flatpak builds have no network). Leaves the checkout in
+# WORKDIR/rosemary for the shader check and prints the commit.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 work=${1:?usage: $0 WORKDIR}
@@ -22,7 +16,7 @@ rm -rf "$work/rosemary"
 git clone -q --depth 1 --branch "$branch" "$repo" "$work/rosemary"
 commit=$(git -C "$work/rosemary" rev-parse HEAD)
 
-# flatpak-builder-tools' own generator, the one Flathub documents.
+# Flathub's documented generator.
 python3 -m venv "$work/venv"
 "$work/venv/bin/pip" install -q aiohttp tomlkit
 curl -fsSL -o "$work/flatpak-cargo-generator.py" \
@@ -34,9 +28,8 @@ curl -fsSL -o "$work/flatpak-cargo-generator.py" \
 sed -i "\#url: $repo\$#{n;s/^\( *commit: \).*/\1$commit/}" "$manifest"
 grep -q "commit: $commit" "$manifest" || { echo "no Rosemary commit line in $manifest" >&2; exit 1; }
 
-# The Rust that builds it: the current stable release, from Rust's own
-# channel listing. Flathub's Rust extension can trail the release Rosemary
-# needs, so the manifest carries Rust's official archive, used only to build.
+# Current stable Rust from Rust's channel listing, used only to build: Flathub's
+# Rust extension can trail what Rosemary needs.
 python3 - "$manifest" <<'PY'
 import re, sys, tomllib, urllib.request
 manifest = sys.argv[1]

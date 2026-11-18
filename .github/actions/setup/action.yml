@@ -1,6 +1,4 @@
-# What every job needs before it builds anything: which version it is
-# building, and what Rosemary's build fetches, restored from the cache.
-# Run after actions/checkout, which is what puts this file there.
+# The version being built and Rosemary's cached downloads. Run after actions/checkout.
 name: Stud setup
 description: Version to build, plus Rust and Rosemary's Cargo downloads
 
@@ -13,9 +11,8 @@ runs:
   using: composite
   steps:
     - name: Version
-      # A release builds its tag. A manual run has none and takes the
-      # version main's CMakeLists.txt declares. VERSION is TAG without a
-      # leading "v": rpm and AppStream both want a bare number.
+      # The tag, or main's CMakeLists.txt version on a manual run. VERSION drops the
+      # leading "v" for rpm and AppStream.
       shell: bash
       run: |
         tag="${TAG:-$(sed -n 's/^project(Stud VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)}"
@@ -24,10 +21,7 @@ runs:
         echo "VERSION=${tag#v}" >> "$GITHUB_ENV"
 
     - name: Rust
-      # The distribution's own when the job installed one: Fedora's and
-      # Arch's are new enough for Rosemary. Ubuntu's is older than
-      # Rosemary's edition needs, so that job installs none and gets
-      # rustup's stable here.
+      # Ubuntu's Rust is too old for Rosemary, so that job gets rustup's stable here.
       if: inputs.rosemary == 'true'
       shell: bash
       run: |
@@ -38,9 +32,7 @@ runs:
         fi
 
     - name: Work out the Cargo cache key
-      # The commit of the Rosemary branch the build fetches, read from the
-      # repository and branch CMakeLists.txt names. A new commit restores
-      # the previous key's downloads and fetches only what changed.
+      # Keyed by Rosemary's branch head; a new commit restores the previous key's downloads.
       if: inputs.rosemary == 'true'
       id: rosemary
       shell: bash
@@ -52,9 +44,7 @@ runs:
         echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
     - name: Cache Rosemary's Cargo downloads
-      # One cache for every job: crates and git checkouts are the same in
-      # every container. What is compiled from them is not, so the target
-      # directory is not cached.
+      # Downloads are the same in every container; the target directory isn't.
       if: inputs.rosemary == 'true'
       uses: actions/cache@v6
       with:

@@ -8,15 +8,12 @@
 #include "cube_gl.h"
 
 CubeView::CubeView(QWidget* parent) : QOpenGLWidget(parent) {
-    // Transparent around the cube: an alpha channel to clear to, and drawn
-    // over the window rather than under it, which is the only way Qt shows
-    // what is behind a GL widget.
+    // Drawn over the window with alpha, the only way Qt shows what's behind a GL widget.
     QSurfaceFormat format = this->format();
     format.setAlphaBufferSize(8);
     setFormat(format);
     setAttribute(Qt::WA_AlwaysStackOnTop);
-    // Paced by a timer, not by each frame being shown: windows do not wait on
-    // the display (see main()), so "draw again once shown" would spin.
+    // Timer-paced: windows don't wait on the display, so draw-when-shown would spin.
     auto* timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, qOverload<>(&QWidget::update));
     timer->start(16);

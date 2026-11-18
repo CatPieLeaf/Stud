@@ -1,9 +1,5 @@
-// The log export writes a real gzipped tar by hand, so this checks it
-// against the format rather than against itself: the gzip framing, the
-// ustar headers, their checksums, and every file's contents.
-//
-// Where a real `tar` is on the machine, it is asked too, an archive
-// that only Stud can read is not an export.
+// Checks the hand-written export against the format (gzip framing, ustar headers,
+// checksums, contents) and, where installed, against a real tar.
 
 #include "log_archive.h"
 #include "check.h"
@@ -25,8 +21,7 @@
 namespace {
 
 std::vector<unsigned char> gunzip(const QByteArray& gz) {
-    // Skip the 10-byte header this writer emits (no extra fields), then
-    // inflate the raw deflate stream.
+    // The writer's 10-byte header has no extra fields.
     if (gz.size() < 18) return {};
     std::size_t out_len = 0;
     void* out = ::tinfl_decompress_mem_to_heap(gz.constData() + 10,
@@ -55,8 +50,7 @@ int main() {
         QFile file(path);
         check(file.open(QIODevice::WriteOnly | QIODevice::Truncate),
               "the fixture log opened for writing");
-        // Sizes that are deliberately not multiples of 512, so the block
-        // padding is actually exercised.
+        // Not multiples of 512, so block padding is exercised.
         file.write(QByteArray(100 + i * 517, static_cast<char>('a' + i)));
         file.close();
         sources << path;
@@ -80,7 +74,6 @@ int main() {
     check(!tar.empty(), "the gzip stream inflates");
     check(tar.size() % 512 == 0, "the tar is a whole number of blocks");
 
-    // The trailer gzip carries: CRC32 and the uncompressed size.
     const unsigned char* trailer = reinterpret_cast<const unsigned char*>(gz.constData()) +
                                    gz.size() - 8;
     const unsigned long stored_crc = static_cast<unsigned long>(trailer[0]) |
@@ -101,7 +94,7 @@ int main() {
     bool one_directory = false;
     for (std::size_t offset = 0; offset + 512 <= tar.size();) {
         const char* header = reinterpret_cast<const char*>(tar.data()) + offset;
-        if (header[0] == '\0') break;  // the end-of-archive blocks
+        if (header[0] == '\0') break;  // end-of-archive blocks
 
         unsigned sum = 0;
         for (int i = 0; i < 512; ++i) {
@@ -118,7 +111,6 @@ int main() {
             continue;
         }
 
-        // Its contents must be exactly what was written, byte for byte.
         const QString source = QDir(dir).filePath(
             QString::fromStdString(name.substr(name.find_last_of('/') + 1)));
         QFile original(source);
@@ -136,7 +128,6 @@ int main() {
     check(every_checksum_ok, "every header is a valid ustar header");
     check(every_body_ok, "every file's contents survive the round trip");
 
-    // And, where there is one, a real tar must agree.
     if (std::system("command -v tar >/dev/null 2>&1") == 0) {
         const std::string command =
             "tar -tzf '" + target.toStdString() + "' >/dev/null 2>&1";

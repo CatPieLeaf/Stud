@@ -181,10 +181,8 @@ def validate(root: Path, expect_desktop_files: bool, rosemary_source: Path | Non
     r.check(elf_has_dynamic_deps(rosemary), "rosemary links no libraries, not a real build")
 
     # ---- the upscalers' shaders -----------------------------------------
-    # Rosemary's build compiles crates/metal/upscale/*.comp with glslc and
-    # embeds them. Without glslc the build still succeeds and the upscalers
-    # in Settings do nothing, so the binary is counted against the sources
-    # it was built from.
+    # Without glslc the build succeeds with useless upscalers, so the embedded
+    # SPIR-V is counted against crates/metal/upscale/*.comp.
     modules = count_spirv_modules(rosemary.read_bytes())
     r.note(f"embedded SPIR-V modules: {modules}")
     if rosemary_source is not None:
@@ -209,8 +207,6 @@ def validate(root: Path, expect_desktop_files: bool, rosemary_source: Path | Non
             r.check(icon.exists(), f"no {size} icon")
 
         # ---- the licences of everything redistributed -------------------
-        # Shipping someone else's binary without its licence is the one
-        # failure here that is a legal problem rather than a bug.
         licenses = share / "licenses" / "stud"
         for name in ("LICENSE", "LICENSE.exception", "NOTICE.md"):
             r.check((licenses / name).exists(), f"Stud's {name} is missing")

@@ -1,15 +1,8 @@
 # Maintainer: CatPieLeaf <catpieleaf@proton.me>
 #
-# Builds Stud from the release source.
-#
-# NOT THE PACKAGE PUBLISHED TO THE AUR; `stud-bin` is (PKGBUILD.stud-bin
-# beside this file). build() compiles Rosemary with cargo, which fetches its
-# git dependencies (Microlift and its wasmtime) while it builds. makepkg
-# only fetches what is listed in source=(), and a clean chroot has no
-# network once the build starts, so this PKGBUILD cannot build there.
-#
-# It is kept here, and kept working, for building Stud from source on your
-# own machine, `makepkg -si` in this directory does exactly that.
+# Builds Stud from source, for local `makepkg -si`. Not the AUR package
+# (PKGBUILD.stud-bin is): Rosemary's cargo build downloads dependencies, which a
+# clean chroot can't.
 
 pkgname=stud
 pkgver=2.0.2
@@ -18,9 +11,7 @@ pkgdesc="An Unofficial Open-Source Roblox Launcher for Linux"
 arch=('x86_64')
 url="https://github.com/CatPieLeaf/Stud"
 license=('AGPL-3.0-or-later')
-# Rosemary opens SDL3 by name rather than linking it, so it is named here;
-# it needs 3.4 or newer, which Arch has. The rest are what the launcher and
-# Rosemary link.
+# SDL3 3.4+ is opened by name, not linked, so it's listed explicitly.
 depends=(
   'gamemode'
   'qt6-base'
@@ -49,9 +40,8 @@ makedepends=(
 optdepends=(
   'mangohud: the performance overlay Stud can switch on in Settings'
 )
-# The tag carries no leading "v", match what is actually published.
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")
-# Replaced by CI at release time, from the tarball GitHub actually serves.
+# Replaced by CI at release time.
 sha256sums=('f5402fd159f9dbd1b2f2c6d2ce472c1134a5b4b42d64a58b9c76ed0601f181d1')
 
 build() {
@@ -72,10 +62,7 @@ package() {
   cd "Stud-$pkgver"
   DESTDIR="$pkgdir" cmake --install build
 
-  # Arch does not use /usr/libexec, a package's own executables belong
-  # in /usr/lib/<pkg>/, and namcap reports anything under libexec as
-  # misplaced. stud-ui looks for Rosemary in both, so the binaries need
-  # no rebuild for this.
+  # Arch has no /usr/libexec; stud-ui looks for Rosemary in lib/stud too.
   if [ -d "$pkgdir/usr/libexec/stud" ]; then
     mkdir -p "$pkgdir/usr/lib"
     cp -a "$pkgdir/usr/libexec/stud" "$pkgdir/usr/lib/stud-helpers"
