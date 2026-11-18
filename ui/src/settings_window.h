@@ -76,6 +76,7 @@ private:
     QLabel* backgroundFpsLabel_;
     QCheckBox* discordCheck_;
     QCheckBox* discordJoinCheck_;
+    QCheckBox* controllersCheck_;
     QCheckBox* serverRegionCheck_;
     QCheckBox* historyGamesCheck_;
     QCheckBox* historyServersCheck_;

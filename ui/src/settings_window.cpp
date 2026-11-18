@@ -16,6 +16,7 @@
 #include "mac_client.h"
 #include "roblox_settings.h"
 #include "notifications.h"
+#include "flatpak_permissions.h"
 #include "stud/settings.h"
 #include "stud/stud_paths.h"
 
@@ -33,6 +34,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFrame>
 #include <QLabel>
 #include <QMessageBox>
 #include <QColorDialog>
@@ -97,6 +99,47 @@ void select_data(QComboBox* combo, const std::string& value) {
 std::string selected_data(const QComboBox* combo) {
     return combo->currentData().toString().toStdString();
 }
+
+// A yellow warning with the `flatpak override` command that grants `missing`, shown
+// while `toggle` is on. Null outside the Flatpak or with nothing missing; overrides
+// apply on the next start, so this is read once.
+QFrame* permission_box(QWidget* parent, QCheckBox* toggle, const QString& what,
+                       QStringList (*missing_of)(const QString&)) {
+    QFile info(QStringLiteral("/.flatpak-info"));
+    if (!info.open(QIODevice::ReadOnly)) return nullptr;
+    const QStringList missing = missing_of(QString::fromUtf8(info.readAll()));
+    if (missing.isEmpty()) return nullptr;
+    const QString command = flatpak_override_command(missing);
+
+    auto* box = new QFrame(parent);
+    box->setObjectName(QStringLiteral("permissionBox"));
+    box->setStyleSheet(QStringLiteral("#permissionBox { background: rgba(255, 193, 7, 0.15);"
+                                      " border: 1px solid #ffc107; border-radius: 6px; }"));
+    auto* row = new QHBoxLayout(box);
+    auto* icon = new QLabel(box);
+    icon->setPixmap(box->style()->standardIcon(QStyle::SP_MessageBoxWarning).pixmap(32, 32));
+    row->addWidget(icon, 0, Qt::AlignTop);
+    auto* column = new QVBoxLayout();
+    auto* text = new QLabel(QStringLiteral("%1 need a permission the Flatpak doesn't have. Run this in a "
+                                           "terminal, then restart Stud:").arg(what),
+                            box);
+    text->setWordWrap(true);
+    column->addWidget(text);
+    auto* line = new QLabel(command, box);
+    line->setWordWrap(true);
+    line->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    line->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    column->addWidget(line);
+    auto* copy = new QPushButton(QStringLiteral("Copy command"), box);
+    QObject::connect(copy, &QPushButton::clicked, box,
+                     [command] { QGuiApplication::clipboard()->setText(command); });
+    column->addWidget(copy, 0, Qt::AlignRight);
+    row->addLayout(column, 1);
+
+    box->setVisible(toggle->isChecked());
+    QObject::connect(toggle, &QCheckBox::toggled, box, &QWidget::setVisible);
+    return box;
+}
 }  // namespace
 
 SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
@@ -152,6 +195,12 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     gamemodeCheck_ = new QCheckBox("GameMode", this);
     gamemodeCheck_->setToolTip("Ask Feral GameMode for its performance settings while Roblox runs.");
     general->addWidget(gamemodeCheck_);
+    controllersCheck_ = new QCheckBox("Game controllers", this);
+    controllersCheck_->setVisible(stud::config::in_flatpak());
+    general->addWidget(controllersCheck_);
+    if (QFrame* box = permission_box(this, controllersCheck_, "Game controllers", missing_controller_permissions)) {
+        general->addWidget(box);
+    }
     auto* cleanerRow = new QHBoxLayout();
     cleanerRow->addWidget(new QLabel("Delete logs and caches older than", this));
     cleanerSpin_ = new QSpinBox(this);
@@ -292,6 +341,9 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     discordJoinCheck_ = new QCheckBox("Show a Join server button", this);
     discord->addWidget(discordJoinCheck_);
     connect(discordCheck_, &QCheckBox::toggled, discordJoinCheck_, &QWidget::setEnabled);
+    if (QFrame* box = permission_box(this, discordCheck_, "Discord Rich Presence", missing_discord_permissions)) {
+        discord->addWidget(box);
+    }
     discord->addStretch();
 
     // ---- Customizations ----------------------------------------------------------
@@ -505,6 +557,7 @@ void SettingsWindow::installResets() {
     add(backgroundFpsSlider_, [this, d] { setBackgroundFps(d.background_fps); });
     add(discordCheck_, [this, d] { discordCheck_->setChecked(d.discord_rich_presence); });
     add(discordJoinCheck_, [this, d] { discordJoinCheck_->setChecked(d.discord_join_button); });
+    add(controllersCheck_, [this, d] { controllersCheck_->setChecked(d.game_controllers); });
     add(serverRegionCheck_,
         [this, d] { serverRegionCheck_->setChecked(d.server_region_notification); });
     add(historyGamesCheck_, [this, d] { historyGamesCheck_->setChecked(d.record_game_history); });
@@ -1352,6 +1405,7 @@ void SettingsWindow::loadFromDisk() {
     discordCheck_->setChecked(settings.discord_rich_presence);
     discordJoinCheck_->setChecked(settings.discord_join_button);
     discordJoinCheck_->setEnabled(settings.discord_rich_presence);
+    controllersCheck_->setChecked(settings.game_controllers);
     serverRegionCheck_->setChecked(settings.server_region_notification);
     historyGamesCheck_->setChecked(settings.record_game_history);
     historyServersCheck_->setChecked(settings.record_server_history);
@@ -1491,6 +1545,7 @@ bool SettingsWindow::onSaveClicked() {
                                   : backgroundFpsSlider_->value();
     settings.discord_rich_presence = discordCheck_->isChecked();
     settings.discord_join_button = discordJoinCheck_->isChecked();
+    settings.game_controllers = controllersCheck_->isChecked();
     settings.server_region_notification = serverRegionCheck_->isChecked();
     settings.record_game_history = historyGamesCheck_->isChecked();
     settings.record_server_history = historyServersCheck_->isChecked();

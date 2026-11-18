@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 
@@ -24,6 +25,11 @@ struct GpuSelection {
 
 struct StudSettings;
 bool waits_for_refresh(const StudSettings& settings);
+
+inline bool in_flatpak() {
+    std::error_code error;
+    return std::filesystem::exists("/.flatpak-info", error);
+}
 
 struct StudSettings {
     GpuSelection gpu;
@@ -61,8 +67,12 @@ struct StudSettings {
     // One NAME=value per line, set last so they win.
     std::string environment;
 
-    bool discord_rich_presence = true;
+    // Off in the Flatpak, which needs an override for Discord's socket.
+    bool discord_rich_presence = !in_flatpak();
     bool discord_join_button = false;
+
+    // Flatpak only: shows the override controllers need.
+    bool game_controllers = false;
 
     bool server_region_notification = false;
 

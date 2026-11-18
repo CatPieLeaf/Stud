@@ -20,24 +20,8 @@ finish-args:
   - --socket=fallback-x11
   # Audio out, and microphone in for voice chat.
   - --socket=pulseaudio
-  # Game controllers, read from the evdev nodes directly.
-  - --device=input
-  # --device=input is only understood from 1.15.6; the linter asks for 1.16.0.
-  - --require-version=1.16.0
-  # Discord rich presence, tried in order until one answers.
-  - --filesystem=xdg-run/discord-ipc-0
-  - --filesystem=xdg-run/discord-ipc-1
-  - --filesystem=xdg-run/discord-ipc-2
-  - --filesystem=xdg-run/discord-ipc-3
-  - --filesystem=xdg-run/discord-ipc-4
-  - --filesystem=xdg-run/discord-ipc-5
-  - --filesystem=xdg-run/discord-ipc-6
-  - --filesystem=xdg-run/discord-ipc-7
-  - --filesystem=xdg-run/discord-ipc-8
-  - --filesystem=xdg-run/discord-ipc-9
-  # A Flatpak Discord keeps its sockets in its own directory instead.
-  - --filesystem=xdg-run/app/com.discordapp.Discord:create
-  - --filesystem=xdg-run/app/dev.vencord.Vesktop:create
+  # Discord Rich Presence (--filesystem=xdg-run/discord-ipc-0) and game
+  # controllers (--device=input) are opt-in: Settings shows the override.
   # QtWebEngine comes from the base app under /app, and the runtime's Qt only
   # looks beside its own prefix.
   - --env=QTWEBENGINEPROCESS_PATH=/app/bin/QtWebEngineProcess
@@ -46,8 +30,7 @@ finish-args:
   # Tray icon, and the notification on joining a game.
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.freedesktop.Notifications
-  # No filesystem access: customizations and FFlag imports are picked
-  # through the file chooser portal.
+  # No filesystem access: files are picked through the portal.
 
 # FFmpeg with H.264, for video in experiences: the runtime's own leaves the
 # patented codecs out. Rosemary opens whichever release is there. `version`

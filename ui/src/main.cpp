@@ -725,8 +725,7 @@ void check_flatpak_permissions() {
     if (!info.open(QIODevice::ReadOnly)) return;
     const QStringList missing = stud::ui::missing_flatpak_permissions(QString::fromUtf8(info.readAll()));
     if (missing.isEmpty()) return;
-    const QString command = QStringLiteral("flatpak override --user %1 %2")
-                                .arg(missing.join(QLatin1Char(' ')), qEnvironmentVariable("FLATPAK_ID"));
+    const QString command = stud::ui::flatpak_override_command(missing);
     std::fprintf(stderr, "stud: the Flatpak is missing %s\n", qPrintable(missing.join(QLatin1Char(' '))));
     QMessageBox box(QMessageBox::Warning, QStringLiteral("Stud"),
                     QStringLiteral("Stud's Flatpak is missing permissions Roblox needs: %1.")

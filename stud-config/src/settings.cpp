@@ -155,6 +155,7 @@ StudSettings load_settings(const std::string& path) {
     read_text("environment", result.environment);
     read_bool("discordRichPresence", result.discord_rich_presence);
     read_bool("discordJoinButton", result.discord_join_button);
+    read_bool("gameControllers", result.game_controllers);
     read_bool("serverRegionNotification", result.server_region_notification);
     read_bool("recordGameHistory", result.record_game_history);
     read_bool("recordServerHistory", result.record_server_history);
@@ -206,6 +207,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc["environment"] = settings.environment;
     doc["discordRichPresence"] = settings.discord_rich_presence;
     doc["discordJoinButton"] = settings.discord_join_button;
+    doc["gameControllers"] = settings.game_controllers;
     doc["serverRegionNotification"] = settings.server_region_notification;
     doc["recordGameHistory"] = settings.record_game_history;
     doc["recordServerHistory"] = settings.record_server_history;
