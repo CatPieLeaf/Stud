@@ -10,18 +10,20 @@
 namespace stud::ui {
 
 struct GpuInfo {
-    uint32_t device_index = 0;  // vkEnumeratePhysicalDevices order, or the DRM card number without Vulkan
+    uint32_t device_index = 0;  // the DRM card number
     std::string name;
     // Picks the GPU selection variable: PRIME offload for NVIDIA, DRI_PRIME for Mesa.
     uint32_t vendor_id = 0;
     bool discrete = false;
-    // deviceUUID in hex, stable when the order changes. Empty on a Vulkan 1.0 loader.
+    // "pci-<address>", stable when card numbers change.
     std::string uuid;
 };
 
-// Read once per process, since each read loads every driver. Without Vulkan, the
-// kernel's GPUs instead, so OpenGL players can still choose.
+// The kernel's GPUs, named from the PCI ID database; read once per process.
 std::vector<GpuInfo> enumerate_gpus();
+
+// Whether any Vulkan driver is installed; without one Roblox runs on OpenGL.
+bool vulkan_available();
 
 inline constexpr uint32_t kVendorNvidia = 0x10de;
 // Shown on the About cube's tenth click and the welcome page, on NVIDIA.
@@ -29,12 +31,11 @@ inline constexpr const char* kNvidiaNote =
     "This GPU model may experience stability due to a decent Vulkan memory allocator in its driver. "
     "It's recommended you use Vulkan if you experience stability.";
 
-// Enumeration order isn't a ranking: hybrid laptops often list the integrated GPU
-// first. Prefers a discrete GPU, else 0.
+// Card order isn't a ranking. Prefers the GPU that didn't boot the display, else 0.
 uint32_t default_gpu_index();
 
-// Drivers or external GPUs can reorder the list, so the UUID decides and the index
-// is a fallback. Nothing saved means default_gpu_index().
+// The PCI address decides and the index is a fallback. Nothing saved, or a choice
+// from the old Vulkan list, means default_gpu_index().
 uint32_t chosen_gpu_index(const stud::config::GpuSelection& selection);
 
 }  // namespace stud::ui

@@ -767,7 +767,7 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
 
     // With no Vulkan device Roblox's Metal renderer can't start, and Mesa's
     // software fallback can't compile its shaders, leaving an empty window.
-    if (stud::ui::enumerate_gpus().empty()) {
+    if (!stud::ui::vulkan_available()) {
         if (const KernelGpu gpu = kernel_gpu(); !gpu.usable) {
             open_settings_for_launch_failure(gpu.blocked.isEmpty() ? no_gpu_reason() : no_gpu_access_reason(gpu));
             return false;

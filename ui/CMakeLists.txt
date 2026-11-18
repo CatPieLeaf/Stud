@@ -1,12 +1,5 @@
 # WebEngineWidgets and WebChannel show the client's web views.
 find_package(Qt6 REQUIRED COMPONENTS Widgets DBus Network WebEngineWidgets WebChannel)
-# Headers only: FindVulkan, the fallback, would also require the loader's
-# development library.
-find_package(VulkanHeaders CONFIG QUIET)
-if(NOT TARGET Vulkan::Headers)
-    find_package(Vulkan REQUIRED)
-endif()
-
 add_library(stud_ui_notifications STATIC
     src/notifications.cpp
 )
@@ -46,8 +39,7 @@ add_library(stud_ui_gpu_enum STATIC
     src/gpu_enum.cpp
 )
 target_include_directories(stud_ui_gpu_enum PUBLIC src)
-# Headers only: libvulkan is opened at run time, so Stud starts without Vulkan.
-target_link_libraries(stud_ui_gpu_enum PUBLIC Vulkan::Headers stud_config ${CMAKE_DL_LIBS})
+target_link_libraries(stud_ui_gpu_enum PUBLIC stud_config)
 
 # The login cookies kept in the system keyring (login_keyring.cpp).
 find_package(PkgConfig REQUIRED)
