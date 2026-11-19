@@ -349,7 +349,11 @@ void download_classic(Part part, const QString& variant, std::function<void(cons
             net->deleteLater();
             if (!pending->error.isEmpty()) return done(pending->error);
             if (part == Part::Cursor) remove(Part::Cursor);
+            // Files the installed client doesn't ship (Bloxstrap targets the Windows one) are left out.
+            const auto build = client::installed(client::Product::Player);
             for (int k = 0; k < sources.size(); ++k) {
+                const QString relative = p.directory + QLatin1Char('/') + p.files.at(k);
+                if (build && !QFileInfo::exists(resources(*build) + QLatin1Char('/') + relative)) continue;
                 QDir().mkpath(dir);
                 QSaveFile out(dir + QLatin1Char('/') + p.files.at(k));
                 if (!out.open(QIODevice::WriteOnly) || out.write(pending->data[k]) < 0 || !out.commit()) {

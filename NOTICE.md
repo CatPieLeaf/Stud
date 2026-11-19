@@ -87,6 +87,11 @@ and no crash reporting of any kind.
   not the one installed. Neither request carries your login.
 - On first use, Rosemary downloads its MiniDarwin base system from
   `github.com/microlift/minidarwin`'s releases.
+- Stud asks `api.github.com` whether a newer Stud is released, and fetches
+  the release notes it shows on the welcome page. The request carries nothing
+  about you.
+- With the server-region notification on, Stud asks `ipwho.is` where the game
+  server you joined is, by the server's address, never yours.
 - When you choose a classic cursor, character sounds or avatar background in
   Settings, Stud downloads those files from Bloxstrap's repository on
   `raw.githubusercontent.com`. Nothing about you is sent.
