@@ -1,5 +1,5 @@
 {
-  description = "Explore and create games on Roblox";
+  description = "Play and create games on Roblox";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -91,7 +91,7 @@
           ];
 
           meta = {
-            description = "Explore and create games on Roblox";
+            description = "Play and create games on Roblox";
             homepage = "https://github.com/CatPieLeaf/Stud";
             license = lib.licenses.agpl3Plus;
             sourceProvenance = [ lib.sourceTypes.fromSource ];
