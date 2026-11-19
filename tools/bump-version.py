@@ -50,7 +50,7 @@ FILES = (
     "tools/fill-release-checksums.py",
 )
 SPEC = ROOT / "packaging/terra/stud.spec"
-METAINFO = ROOT / "packaging/stud.metainfo.xml.in"
+METAINFO = ROOT / "packaging/io.github.catpieleaf.Stud.metainfo.xml"
 
 
 def read(path: str | None) -> str:

@@ -1,37 +1,25 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>@STUD_APP_ID@</id>
-  <launchable type="desktop-id">@STUD_APP_ID@.desktop</launchable>
-  <icon type="stock">@STUD_APP_ID@</icon>
+  <id>io.github.catpieleaf.Stud</id>
+  <launchable type="desktop-id">io.github.catpieleaf.Stud.desktop</launchable>
+  <icon type="stock">io.github.catpieleaf.Stud</icon>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>AGPL-3.0-or-later</project_license>
 
   <name>Stud</name>
-  <summary>An Unofficial Open-Source Roblox Launcher for Linux</summary>
+  <summary>Play Roblox via the macOS client</summary>
 
   <description>
-    <p>
-      Stud runs the real, unmodified Roblox macOS client on your Linux
-      desktop, in its own window, with your mouse and keyboard. No emulator,
-      no virtual machine: the full desktop Roblox, and Roblox Studio too.
-    </p>
+    <p>Stud runs the macOS Roblox Player and Studio on Linux through Rosemary.</p>
     <p>Features:</p>
     <ul>
-      <li>Downloads and updates the client from Roblox's own servers before each launch</li>
-      <li>Links from your browser open straight into the experience, and Studio's links reach Studio</li>
-      <li>FastFlags with profiles and presets, and customizations over Roblox's own content</li>
-      <li>Upscaling, so the game can render below your screen's resolution and still fill it</li>
-      <li>Discord Rich Presence, with a button friends can join through</li>
-      <li>Game history with time played, a system tray, and the country a server is in when you join</li>
+      <li>Updates Roblox from Roblox's own servers before each launch</li>
+      <li>Game history and server list</li>
+      <li>FastFlags, upscaling and customizations</li>
+      <li>Discord Rich Presence</li>
     </ul>
-    <p>
-      Roblox is not included: Stud downloads it from Roblox's own servers,
-      and Roblox remains subject to its own terms.
-    </p>
-    <p>
-      Stud is an independent project and is not affiliated with, endorsed by
-      or approved by Roblox Corporation.
-    </p>
+    <p>Roblox is not included: Stud downloads it from Roblox's own servers, and it remains subject to Roblox's terms.</p>
+    <p>Stud is not affiliated with Roblox Corporation.</p>
   </description>
 
   <categories>
@@ -43,16 +31,6 @@
     <keyword>games</keyword>
   </keywords>
 
-  <!--
-    Screenshots are fetched over the network by every store that shows
-    them, so they have to be URLs: a path to a file inside this package
-    is not something Discover or GNOME Software can read. They are served
-    from this repository itself, which means they resolve once main is
-    pushed; the files are in packaging/screenshots/.
-
-    The first one is the default: it is what a store lists the
-    application by.
-  -->
   <screenshots>
     <screenshot type="default">
       <caption>Stud's settings</caption>
@@ -87,11 +65,8 @@
   <supports>
     <control>keyboard</control>
     <control>pointing</control>
-  </supports>
-
-  <requires>
     <display_length compare="ge">768</display_length>
-  </requires>
+  </supports>
 
   <content_rating type="oars-1.1">
     <content_attribute id="social-chat">intense</content_attribute>
@@ -101,7 +76,6 @@
     <content_attribute id="violence-cartoon">moderate</content_attribute>
   </content_rating>
 
-  <!-- Written by the release workflow (tools/bump-version.py), newest first. -->
   <releases>
     <release version="2.0.2" date="2026-11-17">
       <description>

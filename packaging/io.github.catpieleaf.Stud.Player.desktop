@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Roblox Player
+Exec=stud --roblox
+Icon=io.github.catpieleaf.Stud-player
+Terminal=false
+NoDisplay=true
+StartupWMClass=io.github.catpieleaf.Stud.Player

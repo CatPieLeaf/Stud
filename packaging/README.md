@@ -61,7 +61,7 @@ switches, and neither stops Stud from running.
 ## Appearing in a software centre
 
 Discover, GNOME Software and the rest read AppStream. The component lives
-in `packaging/stud.metainfo.xml.in` and installs to
+in `packaging/io.github.catpieleaf.Stud.metainfo.xml` and installs to
 `share/metainfo/<app-id>.metainfo.xml`. A centre hides an application
 whose component is incomplete, so this one carries the lot: reverse-DNS
 id, `desktop-application` type, a launchable pointing at the desktop
@@ -75,9 +75,9 @@ window reports. They all come from `STUD_APP_ID` in the top-level
 Validate before trusting a package:
 
 ```sh
-appstreamcli validate build/packaging/<app-id>.metainfo.xml
-desktop-file-validate build/packaging/<app-id>.desktop
+appstreamcli validate packaging/io.github.catpieleaf.Stud.metainfo.xml
+desktop-file-validate packaging/io.github.catpieleaf.Stud.desktop
 ```
 
 Screenshots live in `packaging/screenshots/` and are referenced from the
-component's own `<screenshots>` block in `stud.metainfo.xml.in`.
+component's own `<screenshots>` block in `io.github.catpieleaf.Stud.metainfo.xml`.

@@ -1,0 +1,28 @@
+[Desktop Entry]
+Type=Application
+Name=Stud
+Comment=Unofficial Roblox launcher for Linux
+Exec=stud %u
+Icon=io.github.catpieleaf.Stud
+Terminal=false
+StartupNotify=true
+Categories=Game;
+NoDisplay=false
+MimeType=x-scheme-handler/roblox-player;x-scheme-handler/roblox;x-scheme-handler/roblox-studio;x-scheme-handler/roblox-studio-auth;application/x-roblox-rbxl;application/x-roblox-rbxlx;
+StartupWMClass=io.github.catpieleaf.Stud
+Actions=Roblox;Studio;Settings;
+
+[Desktop Action Roblox]
+Name=Roblox Player
+Exec=stud --roblox
+Icon=io.github.catpieleaf.Stud-player
+
+[Desktop Action Studio]
+Name=Roblox Studio
+Exec=stud --studio
+Icon=io.github.catpieleaf.Stud-studio
+
+[Desktop Action Settings]
+Name=Settings
+Exec=stud --settings
+Icon=io.github.catpieleaf.Stud

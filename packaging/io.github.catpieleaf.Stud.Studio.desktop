@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Roblox Studio
+Exec=stud --studio
+Icon=io.github.catpieleaf.Stud-studio
+Terminal=false
+NoDisplay=true
+StartupWMClass=io.github.catpieleaf.Stud.Studio

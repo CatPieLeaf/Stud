@@ -56,20 +56,14 @@ fi
 # An absolute Icon= path shows up at once; a theme name waits for every consumer
 # to notice the new icon directory. The hicolor copies serve anything using the theme.
 icon_path="$icons/512x512/apps/$app_id.png"
-sed -e "s|@STUD_EXEC@|$stud_ui|g" -e "s|@STUD_APP_ID@|$app_id|g" \
-    -e "s|^Icon=$app_id-player$|Icon=$icons/512x512/apps/$app_id-player.png|" \
-    -e "s|^Icon=$app_id-studio$|Icon=$icons/512x512/apps/$app_id-studio.png|" \
-    -e "s|^Icon=$app_id$|Icon=$icon_path|" \
-    "$here/stud.desktop.in" | grep -v '^#' > "$apps/$app_id.desktop"
-chmod 644 "$apps/$app_id.desktop"
-# Hidden entries for the Roblox and Roblox Studio windows' icons.
-for client in "Player|Roblox Player|--roblox|player" "Studio|Roblox Studio|--studio|studio"; do
-    IFS='|' read -r suffix name flag icon <<< "$client"
-    sed -e "s|@STUD_EXEC@|$stud_ui|g" -e "s|@STUD_CLIENT_ID@|$app_id.$suffix|g" \
-        -e "s|@STUD_CLIENT_NAME@|$name|g" -e "s|@STUD_CLIENT_FLAG@|$flag|g" \
-        -e "s|@STUD_CLIENT_ICON@|$icons/512x512/apps/$app_id-$icon.png|g" \
-        "$here/stud-client.desktop.in" | grep -v '^#' > "$apps/$app_id.$suffix.desktop"
-    chmod 644 "$apps/$app_id.$suffix.desktop"
+# The installed entries, pointed at this build and at the icons above.
+for entry in "$app_id" "$app_id.Player" "$app_id.Studio"; do
+    sed -e "s|^Exec=stud|Exec=$stud_ui|" \
+        -e "s|^Icon=$app_id-player$|Icon=$icons/512x512/apps/$app_id-player.png|" \
+        -e "s|^Icon=$app_id-studio$|Icon=$icons/512x512/apps/$app_id-studio.png|" \
+        -e "s|^Icon=$app_id$|Icon=$icon_path|" \
+        "$here/$entry.desktop" | grep -v '^#' > "$apps/$entry.desktop"
+    chmod 644 "$apps/$entry.desktop"
 done
 mime="$HOME/.local/share/mime"
 mkdir -p "$mime/packages"
