@@ -96,9 +96,6 @@ It's a one-person project, built because I wanted a launcher that stays out of t
   <h4 id="status"><img src=".github/headers/workinprogress.png" width="800" alt="Work in progress"></h4>
 </div>
 
-> [!WARNING]
-> **Stud is very unstable.** It boots, logs in, renders the real app and joins real games. It also breaks, hangs and does strange things. For now, treat it as something to tinker with, not something to rely on.
-
 **Contributions of any kind are welcome**: code, bug reports, a log from a machine that isn't ours, a GPU we've never tested on, a screenshot of something rendering wrong. Open an [issue](https://github.com/CatPieLeaf/Stud/issues) and say what happened; the tray's **Export logs** puts every session in one file for you.
 
 <br>
