@@ -7,7 +7,7 @@
 Name:           stud
 Version:        2.0.2
 Release:        1%{?dist}
-Summary:        Play Roblox via the macOS client
+Summary:        Explore and create games on Roblox
 
 License:        AGPL-3.0-or-later
 URL:            https://github.com/CatPieLeaf/Stud

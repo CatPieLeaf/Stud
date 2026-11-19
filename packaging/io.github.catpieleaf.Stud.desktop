@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Stud
-Comment=Play Roblox via the macOS client
+Comment=Explore and create games on Roblox
 Exec=stud %u
 Icon=io.github.catpieleaf.Stud
 Terminal=false

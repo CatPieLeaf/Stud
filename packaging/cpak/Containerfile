@@ -60,6 +60,6 @@ ENV QT_QPA_PLATFORMTHEME=xdgdesktopportal
 COPY --from=build /stage/usr /usr
 
 LABEL org.opencontainers.image.title="Stud" \
-      org.opencontainers.image.description="Play Roblox via the macOS client" \
+      org.opencontainers.image.description="Explore and create games on Roblox" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.source="https://github.com/CatPieLeaf/Stud"

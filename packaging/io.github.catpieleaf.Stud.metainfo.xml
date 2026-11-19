@@ -7,7 +7,7 @@
   <project_license>AGPL-3.0-or-later</project_license>
 
   <name>Stud</name>
-  <summary>Play Roblox via the macOS client</summary>
+  <summary>Explore and create games on Roblox</summary>
 
   <description>
     <p>Stud runs the macOS Roblox Player and Studio on Linux through Rosemary.</p>

@@ -1,5 +1,5 @@
 pkgbase = stud
-	pkgdesc = Play Roblox via the macOS client
+	pkgdesc = Explore and create games on Roblox
 	pkgver = 2.0.2
 	pkgrel = 1
 	url = https://github.com/CatPieLeaf/Stud
