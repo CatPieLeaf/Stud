@@ -80,6 +80,15 @@
   </content_rating>
 
   <releases>
+    <release version="2.0.4" date="2026-11-19">
+      <description>
+        <ul>
+          <li>Fixed: the GPU setting showed no GPUs on some systems</li>
+          <li>Fixed: Alt-Tab away from Roblox brought Roblox straight back to the front</li>
+          <li>Fixed: Roblox could crash right after leaving a game</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.3" date="2026-11-19">
       <description>
         <ul>

@@ -5,7 +5,7 @@
 %global debug_package %{nil}
 
 Name:           stud
-Version:        2.0.3
+Version:        2.0.4
 Release:        1%{?dist}
 Summary:        Play and create games on Roblox
 
@@ -94,6 +94,11 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Thu Nov 19 2026 CatPieLeaf <catpieleaf@proton.me> - 2.0.4-1
+- Fixed: the GPU setting showed no GPUs on some systems
+- Fixed: Alt-Tab away from Roblox brought Roblox straight back to the front
+- Fixed: Roblox could crash right after leaving a game
+
 * Thu Nov 19 2026 CatPieLeaf <catpieleaf@proton.me> - 2.0.3-1
 - New: classic cursors (2006 and 2013), character sounds and avatar editor background, downloaded from Bloxstrap
 - New: a Code font setting, separate from the game font
