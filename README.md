@@ -20,7 +20,7 @@
 
 <div align="center">
 
-[Screenshots](#screenshots) · [Why?](#why) · [Features](#features) · [Status](#status) · [What Stud is not](#not)
+[Screenshots](#screenshots) · [Why?](#why) · [Features](#features) · [Contributions](#contributions) · [What Stud is not](#not)
 
 [How it works](#how) · [Building](#building) · [Installation](#installation) · [Where things live](#files) · [Credits](#credits)
 
@@ -93,7 +93,7 @@ It's a one-person project, built because I wanted a launcher that stays out of t
 <br>
 
 <div align="center">
-  <h4 id="status"><img src=".github/headers/workinprogress.png" width="800" alt="Work in progress"></h4>
+  <h4 id="contributions"><img src=".github/headers/contributions.png" width="800" alt="Contributions"></h4>
 </div>
 
 **Contributions of any kind are welcome**: code, bug reports, a log from a machine that isn't ours, a GPU we've never tested on, a screenshot of something rendering wrong. Open an [issue](https://github.com/CatPieLeaf/Stud/issues) and say what happened; the tray's **Export logs** puts every session in one file for you.
