@@ -131,7 +131,11 @@ uint32_t chosen_gpu_index(const stud::config::GpuSelection& selection) {
         // Saved from the Vulkan list, whose order differs from the kernel's.
         if (selection.device_uuid.rfind("pci-", 0) != 0) return default_gpu_index();
     }
-    return selection.device_index;
+    // A number no GPU has (a removed card, or a choice saved while the list was empty).
+    for (const auto& gpu : enumerate_gpus()) {
+        if (gpu.device_index == selection.device_index) return gpu.device_index;
+    }
+    return default_gpu_index();
 }
 
 }  // namespace stud::ui

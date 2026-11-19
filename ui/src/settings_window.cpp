@@ -1561,9 +1561,12 @@ bool SettingsWindow::onSaveClicked() {
                 .arg(QString::fromUtf8(e.what()).toHtmlEscaped()));
         return false;
     }
-    settings.gpu.device_index = static_cast<uint32_t>(gpuCombo_->currentData().toUInt());
-    settings.gpu.device_name = gpuCombo_->currentText().toStdString();
-    settings.gpu.device_uuid = gpuCombo_->currentData(Qt::UserRole + 2).toString().toStdString();
+    // The "No GPUs found" placeholder carries no data and is never saved as a GPU.
+    if (gpuCombo_->currentData().isValid()) {
+        settings.gpu.device_index = static_cast<uint32_t>(gpuCombo_->currentData().toUInt());
+        settings.gpu.device_name = gpuCombo_->currentText().toStdString();
+        settings.gpu.device_uuid = gpuCombo_->currentData(Qt::UserRole + 2).toString().toStdString();
+    }
     settings.presentation = selected_data(presentationCombo_);
     settings.render_scale = renderScaleSpin_->value();
     settings.upscaler = selected_data(upscalerCombo_);

@@ -57,7 +57,17 @@ int main() {
     gone.device_name = "A card that was removed";
     gone.device_uuid = "pci-0000:99:00.0";
     gone.device_index = 42;
-    check(chosen_gpu_index(gone) == 42, "an address nothing has falls back to the saved index");
+    check(chosen_gpu_index(gone) == stud::ui::default_gpu_index(),
+          "an address and a number nothing has fall back to the default GPU");
+    GpuSelection renumbered = gone;
+    renumbered.device_index = gpus.front().device_index;
+    check(chosen_gpu_index(renumbered) == gpus.front().device_index,
+          "an address nothing has falls back to a saved number that still exists");
+    GpuSelection placeholder;
+    placeholder.device_name = "No GPUs found";
+    placeholder.device_index = 999;
+    check(chosen_gpu_index(placeholder) == stud::ui::default_gpu_index(),
+          "a choice saved while the list was empty goes to the default GPU");
     GpuSelection old_vulkan = gone;
     old_vulkan.device_uuid = "0123456789abcdef0123456789abcdef";
     check(chosen_gpu_index(old_vulkan) == stud::ui::default_gpu_index(),
