@@ -40,6 +40,9 @@ Requires:       libavutil-free
 # GameMode holds the CPU in its performance mode while Roblox runs; Stud
 # turns it on by default.
 Requires:       gamemode
+# GPU names in Settings, and the tray's Copy server link on Wayland; Stud runs without either.
+Recommends:     hwdata
+Recommends:     wl-clipboard
 # A Settings switch, which does not stop Stud from running.
 Suggests:       mangohud
 # Everything else is found by rpm itself from the ELFs: Qt with QtWebEngine
