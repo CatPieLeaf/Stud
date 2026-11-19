@@ -43,7 +43,7 @@ optdepends=(
 )
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")
 # Replaced by CI at release time.
-sha256sums=('f5402fd159f9dbd1b2f2c6d2ce472c1134a5b4b42d64a58b9c76ed0601f181d1')
+sha256sums=('f6fa0da5446e73cc3907e4519812d9fec93dc5e73831204c8f9a366499ae75c1')
 
 build() {
   cd "Stud-$pkgver"
