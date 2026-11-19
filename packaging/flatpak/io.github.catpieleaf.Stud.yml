@@ -48,7 +48,7 @@ modules:
       - /include
       - /lib/cmake
       - /lib/pkgconfig
-      - /share
+      - /share/licenses/SDL3
 
   - name: wl-clipboard
     buildsystem: meson
