@@ -49,8 +49,8 @@ makedepends=(
 source=("$pkgname-$pkgver.tar.zst::$url/releases/download/$pkgver/stud-$pkgver-$CARCH.tar.zst"
         "$_pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")
 # Filled in at release time (updpkgsums or the release workflow's output).
-sha256sums=('d108831a91f045f418272f88ffc9e3d6d38e53544d9f2a07b212b9a199c0fcbd'
-            'f6fa0da5446e73cc3907e4519812d9fec93dc5e73831204c8f9a366499ae75c1')
+sha256sums=('7dca27f70d20052df52c5a57a15848b53744bac8828ccf2b44ce4b8ed2f1af98'
+            '675a372dd31930115dd4b3ba69b622b7de2f63f5b123d4e8cfa5a28893b9b7cf')
 
 build() {
   # Only the launcher; Rosemary comes from the archive.

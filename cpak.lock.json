@@ -1,17 +1,17 @@
 {
   "lock_version": "1.0",
   "root": {
-    "origin": "local.cpak/package/3679ffff9d7eefe9",
-    "manifest_sha256": "3679ffff9d7eefe98b77516d149085e876b9d1c53ccc940fbea98715e7dd698a",
-    "image": "ghcr.io/catpieleaf/stud@sha256:9e38074f6910a02dc8e07a7e7ef338d7b85d1397d90776b69f1d7056a2172b04",
-    "resolved_image": "ghcr.io/catpieleaf/stud@sha256:9e38074f6910a02dc8e07a7e7ef338d7b85d1397d90776b69f1d7056a2172b04",
+    "origin": "local.cpak/package/629516ef3da61ef5",
+    "manifest_sha256": "629516ef3da61ef5d583d9102f5fc57e4213355a18dfe048c58edaf4cd070e4c",
+    "image": "ghcr.io/catpieleaf/stud@sha256:d241a1e3ca38e888f956c90e4bc84371d28e2f3012c8ebeceb038d3ffc7d660f",
+    "resolved_image": "ghcr.io/catpieleaf/stud@sha256:d241a1e3ca38e888f956c90e4bc84371d28e2f3012c8ebeceb038d3ffc7d660f",
     "manifest": {
       "$schema": "https://raw.githubusercontent.com/Containerpak/cpak/v2/schema/manifest-v3.json",
       "manifest_version": "3.0",
       "name": "Stud",
       "description": "Play and create games on Roblox",
       "version": "2.0.4",
-      "image": "ghcr.io/catpieleaf/stud@sha256:9e38074f6910a02dc8e07a7e7ef338d7b85d1397d90776b69f1d7056a2172b04",
+      "image": "ghcr.io/catpieleaf/stud@sha256:d241a1e3ca38e888f956c90e4bc84371d28e2f3012c8ebeceb038d3ffc7d660f",
       "binaries": [
         "/usr/bin/stud"
       ],

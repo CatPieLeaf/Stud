@@ -79,7 +79,7 @@ modules:
     sources:
       - type: git
         url: https://github.com/CatPieLeaf/rosemary-stud.git
-        commit: f2ba4ede3573bcfff541adcfc2f52b4a4714d2c0
+        commit: 5a9f71e4689145be5248d1312048d199941fbf61
       - type: archive
         url: https://static.rust-lang.org/dist/2026-11-12/rust-1.100.0-x86_64-unknown-linux-gnu.tar.xz
         sha256: 98ee6bec240e1cfe944f17e7092412dc5ef6e008484bb668c6936d35a7d15acd
@@ -104,7 +104,7 @@ modules:
     sources:
       - type: archive
         url: https://github.com/CatPieLeaf/Stud/archive/refs/tags/2.0.4.tar.gz
-        sha256: f6fa0da5446e73cc3907e4519812d9fec93dc5e73831204c8f9a366499ae75c1
+        sha256: 675a372dd31930115dd4b3ba69b622b7de2f63f5b123d4e8cfa5a28893b9b7cf
       - type: archive
         url: https://github.com/richgel999/miniz/archive/refs/tags/3.1.2.tar.gz
         sha256: 98468f8924934b723276680f85238b6c78bf1f8b49b4459cc9b7214a20e2e9fb
