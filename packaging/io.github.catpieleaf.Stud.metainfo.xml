@@ -80,6 +80,21 @@
   </content_rating>
 
   <releases>
+    <release version="2.0.3" date="2026-11-19">
+      <description>
+        <ul>
+          <li>New: classic cursors (2006 and 2013), character sounds and avatar editor background, downloaded from Bloxstrap</li>
+          <li>New: a Code font setting, separate from the game font</li>
+          <li>New: your Roblox avatar in Discord Rich Presence, in games and on the home screen</li>
+          <li>New: Close Roblox when leaving a game</li>
+          <li>New: your Roblox login is kept in your system keyring between sessions</li>
+          <li>New: GPUs are listed by name even without Vulkan, so OpenGL players can pick one</li>
+          <li>Fixed: a custom font turned Chinese, Japanese and Korean text into empty boxes</li>
+          <li>Flatpak: no longer asks for Discord or controller access by default; Settings shows how to allow them</li>
+          <li>cpak: the tray's Copy server link works, once cpak has the tray fix</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.2" date="2026-11-17">
       <description>
         <ul>

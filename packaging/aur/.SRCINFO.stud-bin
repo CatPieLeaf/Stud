@@ -1,6 +1,6 @@
 pkgbase = stud-bin
 	pkgdesc = Play and create games on Roblox
-	pkgver = 2.0.2
+	pkgver = 2.0.3
 	pkgrel = 1
 	url = https://github.com/CatPieLeaf/Stud
 	arch = x86_64
@@ -26,13 +26,13 @@ pkgbase = stud-bin
 	depends = hicolor-icon-theme
 	depends = ffmpeg
 	optdepends = mangohud: the performance overlay Stud can switch on in Settings
-	provides = stud=2.0.2
+	provides = stud=2.0.3
 	conflicts = stud
 	options = !strip
 	options = !debug
 	options = emptydirs
-	source = stud-bin-2.0.2.tar.zst::https://github.com/CatPieLeaf/Stud/releases/download/2.0.2/stud-2.0.2-x86_64.tar.zst
-	source = stud-2.0.2.tar.gz::https://github.com/CatPieLeaf/Stud/archive/refs/tags/2.0.2.tar.gz
+	source = stud-bin-2.0.3.tar.zst::https://github.com/CatPieLeaf/Stud/releases/download/2.0.3/stud-2.0.3-x86_64.tar.zst
+	source = stud-2.0.3.tar.gz::https://github.com/CatPieLeaf/Stud/archive/refs/tags/2.0.3.tar.gz
 	sha256sums = 545f43641c591bb6855cce9c3e8d14e1c53cb17a6943be07947d21a8ce640c94
 	sha256sums = f5402fd159f9dbd1b2f2c6d2ce472c1134a5b4b42d64a58b9c76ed0601f181d1
 

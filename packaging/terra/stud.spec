@@ -5,7 +5,7 @@
 %global debug_package %{nil}
 
 Name:           stud
-Version:        2.0.2
+Version:        2.0.3
 Release:        1%{?dist}
 Summary:        Play and create games on Roblox
 
@@ -94,6 +94,17 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Thu Nov 19 2026 CatPieLeaf <catpieleaf@proton.me> - 2.0.3-1
+- New: classic cursors (2006 and 2013), character sounds and avatar editor background, downloaded from Bloxstrap
+- New: a Code font setting, separate from the game font
+- New: your Roblox avatar in Discord Rich Presence, in games and on the home screen
+- New: Close Roblox when leaving a game
+- New: your Roblox login is kept in your system keyring between sessions
+- New: GPUs are listed by name even without Vulkan, so OpenGL players can pick one
+- Fixed: a custom font turned Chinese, Japanese and Korean text into empty boxes
+- Flatpak: no longer asks for Discord or controller access by default; Settings shows how to allow them
+- cpak: the tray's Copy server link works, once cpak has the tray fix
+
 * Tue Nov 17 2026 CatPieLeaf <catpieleaf@proton.me> - 2.0.2-1
 - Fixed: Stud didn't start at all on X11 (#36)
 - Fixed: a Roblox window behind other windows took over the cursor, and the home screen reacted, just from the mouse passing over it

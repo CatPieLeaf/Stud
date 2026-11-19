@@ -3,7 +3,7 @@
   "manifest_version": "3.0",
   "name": "Stud",
   "description": "Play and create games on Roblox",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "image": "ghcr.io/catpieleaf/stud@sha256:e07184538425efa333e39cd7cb4d367f2fbf559d490cabef63b63d8efb4dbc2a",
   "binaries": [
     "/usr/bin/stud"
