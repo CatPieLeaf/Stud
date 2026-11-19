@@ -7,6 +7,7 @@ Icon=io.github.catpieleaf.Stud
 Terminal=false
 StartupNotify=true
 Categories=Game;
+Keywords=roblox;game;gaming;launcher;studio;
 NoDisplay=false
 MimeType=x-scheme-handler/roblox-player;x-scheme-handler/roblox;x-scheme-handler/roblox-studio;x-scheme-handler/roblox-studio-auth;application/x-roblox-rbxl;application/x-roblox-rbxlx;
 StartupWMClass=io.github.catpieleaf.Stud
