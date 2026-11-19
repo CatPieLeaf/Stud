@@ -8,7 +8,7 @@
 
 set(CPACK_PACKAGE_NAME "stud")
 set(CPACK_PACKAGE_VERSION "${STUD_VERSION}")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "An Unofficial Open-Source Roblox Launcher for Linux")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Play Roblox via the macOS client")
 set(CPACK_PACKAGE_DESCRIPTION
     "Stud runs the real Roblox macOS client on a Linux desktop, on \
 Rosemary. It downloads the client from Roblox's own servers and runs it \

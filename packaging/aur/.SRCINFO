@@ -1,5 +1,5 @@
 pkgbase = stud
-	pkgdesc = An Unofficial Open-Source Roblox Launcher for Linux
+	pkgdesc = Play Roblox via the macOS client
 	pkgver = 2.0.2
 	pkgrel = 1
 	url = https://github.com/CatPieLeaf/Stud

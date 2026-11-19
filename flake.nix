@@ -1,5 +1,5 @@
 {
-  description = "An Unofficial Roblox Launcher for Linux";
+  description = "Play Roblox via the macOS client";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -91,7 +91,7 @@
           ];
 
           meta = {
-            description = "An Unofficial Roblox Launcher for Linux";
+            description = "Play Roblox via the macOS client";
             homepage = "https://github.com/CatPieLeaf/Stud";
             license = lib.licenses.agpl3Plus;
             sourceProvenance = [ lib.sourceTypes.fromSource ];

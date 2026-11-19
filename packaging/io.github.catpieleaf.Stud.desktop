@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Stud
-Comment=Unofficial Roblox launcher for Linux
+Comment=Play Roblox via the macOS client
 Exec=stud %u
 Icon=io.github.catpieleaf.Stud
 Terminal=false

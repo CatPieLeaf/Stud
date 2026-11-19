@@ -7,7 +7,7 @@
 Name:           stud
 Version:        2.0.2
 Release:        1%{?dist}
-Summary:        An Unofficial Open-Source Roblox Launcher for Linux
+Summary:        Play Roblox via the macOS client
 
 License:        AGPL-3.0-or-later
 URL:            https://github.com/CatPieLeaf/Stud

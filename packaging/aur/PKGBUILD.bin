@@ -5,7 +5,7 @@
 pkgname=stud
 pkgver=2.0.2
 pkgrel=1
-pkgdesc="An Unofficial Open-Source Roblox Launcher for Linux"
+pkgdesc="Play Roblox via the macOS client"
 arch=('x86_64')
 url="https://github.com/CatPieLeaf/Stud"
 license=('AGPL-3.0-or-later')
