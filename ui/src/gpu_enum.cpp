@@ -52,10 +52,22 @@ std::string pci_model(uint32_t vendor, uint32_t device) {
 // hybrid laptop; the PCI address identifies a card when card numbers change.
 std::vector<GpuInfo> read_gpus() {
     std::vector<GpuInfo> result;
-    for (uint32_t card = 0;; ++card) {
+    // Every cardN, not counting from 0: a card0 handed over by the boot framebuffer
+    // leaves the GPUs at card1 and up.
+    std::vector<uint32_t> cards;
+    std::error_code listed;
+    for (const auto& entry : std::filesystem::directory_iterator("/sys/class/drm", listed)) {
+        const std::string name = entry.path().filename().string();
+        if (name.size() > 4 && name.rfind("card", 0) == 0 &&
+            name.find_first_not_of("0123456789", 4) == std::string::npos) {
+            cards.push_back(std::stoul(name.substr(4)));
+        }
+    }
+    std::sort(cards.begin(), cards.end());
+    for (const uint32_t card : cards) {
         const std::string device = "/sys/class/drm/card" + std::to_string(card) + "/device";
         const std::string vendor = read_word(device + "/vendor");
-        if (vendor.empty()) break;
+        if (vendor.empty()) continue;
         const uint32_t vendor_id = std::stoul(vendor, nullptr, 16);
         const char* maker = vendor_id == kVendorNvidia ? "NVIDIA" : vendor_id == 0x1002 ? "AMD"
                           : vendor_id == 0x8086 ? "Intel" : "GPU";
