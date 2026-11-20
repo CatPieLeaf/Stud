@@ -251,12 +251,20 @@ To build from source instead, use the PKGBUILD at `packaging/aur/`.
 
 ## 🔶 F L A T P A K
 
+Stud is on [Flathub](https://flathub.org/en/apps/io.github.catpieleaf.Stud), so it installs and updates like any other Flatpak:
+
 ```bash
-flatpak install --user ./stud-*-x86_64.flatpak
+flatpak install flathub io.github.catpieleaf.Stud
 flatpak run io.github.catpieleaf.Stud
 ```
 
-Not on Flathub yet, so it's a file attached to each release rather than a remote. The manifest is in `packaging/flatpak`.
+Or install the bundle from a release by hand:
+
+```bash
+flatpak install --user ./stud-*-x86_64.flatpak
+```
+
+The manifest is in `packaging/flatpak`.
 
 ## ⬛ C P A K
 
