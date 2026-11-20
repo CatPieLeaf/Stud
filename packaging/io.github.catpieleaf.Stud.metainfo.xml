@@ -85,6 +85,20 @@
   </content_rating>
 
   <releases>
+    <release version="2.0.5" date="2026-11-20">
+      <description>
+        <ul>
+          <li>New: Roblox's sign-in and web pages run on WPE WebKit, replacing QtWebEngine</li>
+          <li>New: notifications show as a Mac-style banner inside Roblox while it's fullscreen</li>
+          <li>Changed: new installs use the desktop's own title bar by default</li>
+          <li>Changed: much smaller packages</li>
+          <li>Changed: on Fedora without Terrapkg, the welcome page shows how to add WPE WebKit when it's missing</li>
+          <li>Fixed: Settings could save "No GPUs found" as the chosen GPU</li>
+          <li>Fixed: the buttons that open folders and links did nothing in the cpak container</li>
+          <li>Stud is now on Flathub</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.4" date="2026-11-19">
       <description>
         <ul>

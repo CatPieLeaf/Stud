@@ -5,7 +5,7 @@
 %global debug_package %{nil}
 
 Name:           stud
-Version:        2.0.4
+Version:        2.0.5
 Release:        1%{?dist}
 Summary:        Play and create games on Roblox
 
@@ -99,6 +99,16 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Fri Nov 20 2026 CatPieLeaf <catpieleaf@proton.me> - 2.0.5-1
+- New: Roblox's sign-in and web pages run on WPE WebKit, replacing QtWebEngine
+- New: notifications show as a Mac-style banner inside Roblox while it's fullscreen
+- Changed: new installs use the desktop's own title bar by default
+- Changed: much smaller packages
+- Changed: on Fedora without Terrapkg, the welcome page shows how to add WPE WebKit when it's missing
+- Fixed: Settings could save "No GPUs found" as the chosen GPU
+- Fixed: the buttons that open folders and links did nothing in the cpak container
+- Stud is now on Flathub
+
 * Thu Nov 19 2026 CatPieLeaf <catpieleaf@proton.me> - 2.0.4-1
 - Fixed: the GPU setting showed no GPUs on some systems
 - Fixed: Alt-Tab away from Roblox brought Roblox straight back to the front
