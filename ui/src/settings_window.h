@@ -65,6 +65,7 @@ private:
     QComboBox* upscalerCombo_;
     QComboBox* rendererCombo_;
     QComboBox* titleBarCombo_;
+    QComboBox* notificationsCombo_;
     QComboBox* displayBackendCombo_;
     QCheckBox* gamemodeCheck_;
     QCheckBox* mangohudCheck_;

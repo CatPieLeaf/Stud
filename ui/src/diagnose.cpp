@@ -281,6 +281,7 @@ void build_diagnostics() {
         line("renderer", settings.renderer);
         line("presentation", settings.presentation);
         line("title bar", settings.title_bar);
+        line("notifications", settings.notifications);
         // Without a Wayland display the setting doesn't apply: SDL uses X11.
         line("display backend", qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY") ? std::string("x11 (no Wayland)")
                                                                                : settings.display_backend);

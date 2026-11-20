@@ -143,6 +143,7 @@ StudSettings load_settings(const std::string& path) {
     }
     read_string("upscaler", result.upscaler, {"ravu-ar", "sgsr-ed"});
     read_string("titleBar", result.title_bar, {"macos", "macos-no-menu", "native"});
+    read_string("notifications", result.notifications, {"system", "fullscreen", "always"});
     // Older builds wrote "auto", which meant Wayland.
     if (at("displayBackend") == QJsonValue(QStringLiteral("auto"))) doc.insert(QStringLiteral("displayBackend"), QStringLiteral("wayland"));
     read_string("displayBackend", result.display_backend, {"wayland", "x11"});
@@ -196,6 +197,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc.insert(QStringLiteral("renderResolution"), settings.render_scale);
     doc.insert(QStringLiteral("upscaler"), text(settings.upscaler));
     doc.insert(QStringLiteral("titleBar"), text(settings.title_bar));
+    doc.insert(QStringLiteral("notifications"), text(settings.notifications));
     doc.insert(QStringLiteral("displayBackend"), text(settings.display_backend));
     doc.insert(QStringLiteral("backgroundFps"), settings.background_fps);
     doc.insert(QStringLiteral("mangohud"), settings.mangohud);

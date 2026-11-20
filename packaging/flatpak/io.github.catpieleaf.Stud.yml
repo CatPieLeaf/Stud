@@ -58,7 +58,6 @@ modules:
       - /share/man
       - /share/bash-completion
 
-  # WebKit's build scripts need Ruby; nothing of it is shipped.
   - name: ruby
     config-opts:
       - --disable-install-doc
@@ -69,12 +68,8 @@ modules:
         url: https://cache.ruby-lang.org/pub/ruby/3.4/ruby-3.4.13.tar.xz
         sha256: 6474dff9c02ea685fc44877a4807a27366bf109b176dad182108bb8c96d09589
 
-  # Rosemary shows the client's web pages with WPE WebKit, which no runtime has.
-  # Only its Wayland platform is built; what needs libraries the runtime lacks is off.
   - name: wpewebkit
     buildsystem: cmake-ninja
-    # Line tables only: GCC 15's variable tracking crashes on WebCore, and full
-    # debug info needs gigabytes per compile.
     build-options:
       cflags: -g1
       cxxflags: -g1
@@ -127,7 +122,7 @@ modules:
     sources:
       - type: git
         url: https://github.com/CatPieLeaf/rosemary-stud.git
-        commit: 43643b87241536c3152f5091af7fa8283f5685f7
+        commit: bc121a5b18de973702f0c135909b8b684cbed2b1
       - type: archive
         url: https://static.rust-lang.org/dist/2026-11-12/rust-1.100.0-x86_64-unknown-linux-gnu.tar.xz
         sha256: 98ee6bec240e1cfe944f17e7092412dc5ef6e008484bb668c6936d35a7d15acd

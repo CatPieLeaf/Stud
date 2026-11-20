@@ -3,7 +3,7 @@ add_library(stud_ui_notifications STATIC
     src/notifications.cpp
 )
 target_include_directories(stud_ui_notifications PUBLIC src)
-target_link_libraries(stud_ui_notifications PUBLIC Qt6::Core Qt6::DBus)
+target_link_libraries(stud_ui_notifications PUBLIC Qt6::Core Qt6::DBus Qt6::Network stud_config)
 # Notifications name their desktop entry, which is the application id.
 target_compile_definitions(stud_ui_notifications PRIVATE STUD_APP_ID="${STUD_APP_ID}")
 

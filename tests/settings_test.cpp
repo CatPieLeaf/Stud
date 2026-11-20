@@ -44,6 +44,7 @@ int main(int argc, char** argv) {
           "the game renders at full size, with RAVU-Zoom ready");
     check(defaults.renderer == "vulkan", "the renderer defaults to Vulkan");
     check(defaults.title_bar == "native", "the title bar defaults to the desktop's own");
+    check(defaults.notifications == "fullscreen", "notifications show in the client while it is fullscreen");
     check(defaults.display_backend == "wayland", "the display backend defaults to Wayland");
     check(defaults.system_tray, "the tray defaults to on");
     check(defaults.background_fps == 30, "the background frame rate defaults to 30");
@@ -61,6 +62,7 @@ int main(int argc, char** argv) {
     settings.upscaler = "sgsr-ed";
     settings.renderer = "opengl";
     settings.title_bar = "macos";
+    settings.notifications = "always";
     settings.display_backend = "x11";
     settings.mangohud = true;
     settings.gamemode = false;
@@ -86,6 +88,7 @@ int main(int argc, char** argv) {
     check(loaded.render_scale == 67 && loaded.upscaler == "sgsr-ed", "render scale and upscaler round-trip");
     check(loaded.renderer == "opengl", "the renderer round-trips");
     check(loaded.title_bar == "macos", "the title bar round-trips");
+    check(loaded.notifications == "always", "where notifications show round-trips");
     check(loaded.display_backend == "x11", "the display backend round-trips");
     check(loaded.mangohud, "mangohud round-trips");
     check(!loaded.gamemode, "gamemode round-trips");
@@ -153,6 +156,8 @@ int main(int argc, char** argv) {
     check(throws_on(dir + "/bad.json", "not valid json {{{"), "malformed JSON throws");
     check(throws_on(dir + "/bad_title.json", R"({"titleBar": "dock"})"),
           "an unknown title bar value throws");
+    check(throws_on(dir + "/bad_notifications.json", R"({"notifications": "popup"})"),
+          "an unknown notifications value throws");
     check(throws_on(dir + "/bad_backend.json", R"({"displayBackend": "mir"})"),
           "an unknown display backend throws");
     {

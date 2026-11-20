@@ -53,6 +53,11 @@ struct StudSettings {
     // "macos" (with menu bar), "macos-no-menu", or "native" (the desktop's).
     std::string title_bar = "native";
 
+    // Where a notification shows while the client runs: "system" (the
+    // desktop's), "fullscreen" (a Mac-style banner in the client while it is
+    // fullscreen, where the desktop hides its own) or "always" (that banner).
+    std::string notifications = "fullscreen";
+
     // "wayland" or "x11" (XWayland). Only read where both are available.
     std::string display_backend = "wayland";
 

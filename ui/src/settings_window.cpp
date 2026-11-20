@@ -223,6 +223,16 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     titleBarCombo_->addItem("Linux native title bar", QStringLiteral("native"));
     general->addWidget(titleBarCombo_);
 
+    general->addWidget(new QLabel("Notifications"));
+    notificationsCombo_ = new QComboBox(this);
+    notificationsCombo_->addItem("In Roblox when it is fullscreen", QStringLiteral("fullscreen"));
+    notificationsCombo_->addItem("Always in Roblox", QStringLiteral("always"));
+    notificationsCombo_->addItem("System notifications", QStringLiteral("system"));
+    notificationsCombo_->setToolTip(
+        "Where Stud's notifications show while Roblox or Studio is open. The desktop hides its own "
+        "over a fullscreen game, so Stud can show a Mac-style one in Roblox instead.");
+    general->addWidget(notificationsCombo_);
+
     // Only offered on Wayland desktops that also run XWayland.
     auto* displayBackendLabel = new QLabel("Display server", this);
     general->addWidget(displayBackendLabel);
@@ -577,6 +587,7 @@ void SettingsWindow::installResets() {
     add(upscalerCombo_, [this, d] { select_data(upscalerCombo_, d.upscaler); });
     add(rendererCombo_, [this, d] { select_data(rendererCombo_, d.renderer); });
     add(titleBarCombo_, [this, d] { select_data(titleBarCombo_, d.title_bar); });
+    add(notificationsCombo_, [this, d] { select_data(notificationsCombo_, d.notifications); });
     add(displayBackendCombo_, [this, d] { select_data(displayBackendCombo_, d.display_backend); });
     add(gamemodeCheck_, [this, d] { gamemodeCheck_->setChecked(d.gamemode); });
     add(mangohudCheck_, [this, d] { mangohudCheck_->setChecked(d.mangohud); });
@@ -1428,6 +1439,7 @@ void SettingsWindow::loadFromDisk() {
     upscalerCombo_->setEnabled(settings.render_scale < 100);
     select_data(rendererCombo_, settings.renderer);
     select_data(titleBarCombo_, settings.title_bar);
+    select_data(notificationsCombo_, settings.notifications);
     select_data(displayBackendCombo_, settings.display_backend);
     mangohudCheck_->setChecked(settings.mangohud);
     wrapperEdit_->setText(QString::fromStdString(settings.launch_wrapper));
@@ -1571,6 +1583,7 @@ bool SettingsWindow::onSaveClicked() {
     settings.upscaler = selected_data(upscalerCombo_);
     settings.renderer = selected_data(rendererCombo_);
     settings.title_bar = selected_data(titleBarCombo_);
+    settings.notifications = selected_data(notificationsCombo_);
     settings.display_backend = selected_data(displayBackendCombo_);
     settings.mangohud = mangohudCheck_->isChecked();
     settings.launch_wrapper = wrapperEdit_->text().trimmed().toStdString();

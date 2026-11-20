@@ -331,7 +331,7 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
         QStringLiteral("ROSEMARY_BACKGROUND_FPS"), QStringLiteral("ROSEMARY_RENDER_SCALE"),
         QStringLiteral("ROSEMARY_UPSCALER"), QStringLiteral("ROSEMARY_WINDOW_STATE"),
         QStringLiteral("ROSEMARY_SWAPCHAIN_MAIN_WINDOW_ONLY"), QStringLiteral("ROSEMARY_PROC_TRANSLATED"),
-        QStringLiteral("ROSEMARY_REFUSED_PROGRAMS"),
+        QStringLiteral("ROSEMARY_REFUSED_PROGRAMS"), QStringLiteral("ROSEMARY_NOTIFICATIONS"),
     };
     for (const QString& name : env.keys()) {
         if (loads_code(name) || kFromSettings.contains(name)) env.remove(name);
@@ -387,11 +387,10 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
     }
     env.insert(QStringLiteral("ROSEMARY_STATUS_ITEMS"), QStringLiteral("0"));
     {
-        const QString state = QString::fromStdString(stud::paths::state_dir());
-        QDir().mkpath(state);
-        env.insert(QStringLiteral("ROSEMARY_WINDOW_STATE"),
-                   state + (product == stud::ui::client::Product::Studio ? QStringLiteral("/window-studio")
-                                                                         : QStringLiteral("/window")));
+        const bool studio = product == stud::ui::client::Product::Studio;
+        QDir().mkpath(QString::fromStdString(stud::paths::state_dir()));
+        env.insert(QStringLiteral("ROSEMARY_WINDOW_STATE"), stud::ui::window_state_path(studio));
+        env.insert(QStringLiteral("ROSEMARY_NOTIFICATIONS"), stud::ui::banner_socket_path(studio));
     }
     if (settings.background_fps != stud::config::kBackgroundFpsNoLimit) {
         env.insert(QStringLiteral("ROSEMARY_BACKGROUND_FPS"),
