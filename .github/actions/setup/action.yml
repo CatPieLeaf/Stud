@@ -7,6 +7,14 @@ inputs:
     description: Set up Rust and restore Rosemary's Cargo downloads
     default: "true"
 
+outputs:
+  cargo-key:
+    description: The Cargo cache key for Rosemary's branch head
+    value: ${{ steps.rosemary.outputs.key }}
+  cargo-hit:
+    description: "\"true\" when that exact key was restored"
+    value: ${{ steps.cargo.outputs.cache-hit }}
+
 runs:
   using: composite
   steps:
@@ -41,16 +49,19 @@ runs:
         branch="$(sed -n 's/^set(STUD_ROSEMARY_BRANCH "\([^"]*\)".*/\1/p' CMakeLists.txt)"
         sha="$(git ls-remote "$repo" "refs/heads/$branch" | cut -f1)"
         [ -n "$sha" ] || { echo "::error::cannot read $branch of $repo"; exit 1; }
-        echo "sha=$sha" >> "$GITHUB_OUTPUT"
+        echo "key=cargo-$sha" >> "$GITHUB_OUTPUT"
 
-    - name: Cache Rosemary's Cargo downloads
-      # Downloads are the same in every container; the target directory isn't.
+    - name: Restore Rosemary's Cargo downloads
+      # Restore only: the Dependency cache workflow saves from main, whose caches every
+      # ref sees, and deletes the older ones. Downloads are the same in every container;
+      # the target directory isn't. The paths must match that workflow's save.
       if: inputs.rosemary == 'true'
-      uses: actions/cache@v6
+      id: cargo
+      uses: actions/cache/restore@v6
       with:
         path: |
           ~/.cargo/registry/index
           ~/.cargo/registry/cache
           ~/.cargo/git/db
-        key: cargo-${{ steps.rosemary.outputs.sha }}
+        key: ${{ steps.rosemary.outputs.key }}
         restore-keys: cargo-

@@ -1,36 +1,126 @@
-# Fetches and caches what Rosemary's build downloads. Caches from a tag aren't
-# visible to other tags, but the default branch's are visible to every ref, so this
-# fills them from main. Run it after the Rosemary branch moves or when a release
-# reports a cold cache.
+# Fills the caches releases restore: Rosemary's Cargo downloads, and the Flatpak's
+# WPE WebKit build (its modules before Rosemary). Only the default branch's caches
+# are visible to every ref, so this runs on main and releases only restore. Each run
+# deletes every other cache, so nothing stale is picked up, and the schedule keeps
+# the current ones from GitHub's eviction of caches unused for a week.
 
 name: Dependency cache
 
 on:
-  # Manual only. Run it from main: only the default branch's caches are shared.
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - CMakeLists.txt
+      - packaging/flatpak/io.github.catpieleaf.Stud.yml
+      - tools/flatpak-wpe-cache-key.sh
+      - .github/actions/setup/action.yml
+      - .github/workflows/dependency-cache.yml
+  # Also catches Rosemary's branch and the Flatpak SDK moving.
+  schedule:
+    - cron: "0 6 * * 1,4"
 
 permissions:
   contents: read
 
 concurrency:
   group: dependency-cache
-  cancel-in-progress: true
+  # A WPE build takes hours; a newer run waits for it instead of throwing it away.
+  cancel-in-progress: false
 
 jobs:
-  dependencies:
-    name: Dependencies
+  cargo:
+    name: Rosemary's Cargo downloads
     runs-on: ubuntu-latest
+    outputs:
+      key: ${{ steps.setup.outputs.cargo-key }}
     steps:
       - uses: actions/checkout@v7
 
       - name: Version, Rust and the Cargo cache
+        id: setup
         uses: ./.github/actions/setup
 
       - name: Fetch Rosemary's dependencies
-        # Into ~/.cargo, saved by the setup step's cache; Cargo.lock decides what's fetched.
+        # Into ~/.cargo, on top of whatever older key was restored; Cargo.lock decides what's fetched.
+        if: steps.setup.outputs.cargo-hit != 'true'
         run: |
           repo="$(sed -n 's/^set(STUD_ROSEMARY_REPOSITORY "\([^"]*\)".*/\1/p' CMakeLists.txt)"
           branch="$(sed -n 's/^set(STUD_ROSEMARY_BRANCH "\([^"]*\)".*/\1/p' CMakeLists.txt)"
           git clone --depth 1 --branch "$branch" "$repo" "$RUNNER_TEMP/rosemary"
           cargo fetch --locked --manifest-path "$RUNNER_TEMP/rosemary/Cargo.toml"
           du -sh ~/.cargo/registry ~/.cargo/git
+
+      - name: Save them
+        # The same paths as the setup action's restore.
+        if: steps.setup.outputs.cargo-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ steps.setup.outputs.cargo-key }}
+
+  flatpak-wpe:
+    name: WPE WebKit for the Flatpak
+    runs-on: ubuntu-latest
+    container:
+      # The release's Flatpak job image, so flatpak-builder's version and the key match.
+      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.10
+      options: --privileged
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Work out the WPE cache key
+        id: key
+        run: |
+          flatpak remote-add --if-not-exists --system flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+          echo "key=$(tools/flatpak-wpe-cache-key.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the WPE build
+        # A hit also counts as use, which keeps the cache from being evicted.
+        id: restore
+        uses: actions/cache/restore@v6
+        with:
+          path: .flatpak-builder
+          key: ${{ steps.key.outputs.key }}
+
+      - name: Build the modules before Rosemary
+        # Rosemary and Stud aren't fetched or built, so the cache holds only WPE and what it needs.
+        if: steps.restore.outputs.cache-hit != 'true'
+        run: |
+          flatpak-builder --force-clean --disable-rofiles-fuse --stop-at=rosemary \
+            --install-deps-from=flathub build-dir \
+            packaging/flatpak/io.github.catpieleaf.Stud.yml
+
+      - name: Save it
+        if: steps.restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: .flatpak-builder
+          key: ${{ steps.key.outputs.key }}
+
+  cleanup:
+    name: Delete the other caches
+    needs: [cargo, flatpak-wpe]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CARGO_KEY: ${{ needs.cargo.outputs.key }}
+      WPE_KEY: ${{ needs.flatpak-wpe.outputs.key }}
+    steps:
+      - name: Delete every cache but the two above, on every ref
+        # Older Cargo keys would match the releases' restore-keys, and tag caches are never read.
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/caches" \
+            --jq '.actions_caches[] | select(.key != env.CARGO_KEY and .key != env.WPE_KEY) | "\(.id) \(.ref) \(.key)"' |
+          while read -r id ref key; do
+            echo "deleting $key ($ref)"
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/caches/$id"
+          done

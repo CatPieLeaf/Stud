@@ -23,6 +23,11 @@ the build shares.
   sources (`packaging/flatpak/rosemary-cargo-sources.json`). The release
   workflow runs it before every Flatpak build and after each release.
 
+- **`flatpak-wpe-cache-key.sh`**: prints the Actions cache key for the
+  Flatpak's modules before Rosemary (WPE WebKit and what it needs), from those
+  modules, the runtime and SDK commits, and flatpak-builder's version. The
+  Dependency cache workflow saves that build under it; the release restores it.
+
 - **`validate-payload.py`**, **`compare-package-contents.py`**,
   **`check-aur-depends.py`** and **`check-cpak-runtime.py`**: the
   release's package checks. `validate-payload.py --rosemary-source` also
