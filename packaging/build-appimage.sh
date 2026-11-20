@@ -59,8 +59,9 @@ python3 "$repo_root/tools/validate-payload.py" / --label "installed tree" \
 
 # Arch's FFmpeg links encoders and image libraries (x265, aom, SVT-AV1, librsvg
 # and its loaders) nothing here uses. The same version with every decoder and
-# demuxer but no encoders or muxers replaces it, so Rosemary and Qt WebEngine find
-# what they use under the same names; FFmpeg links only codec libraries asked for.
+# demuxer but no encoders or muxers replaces it, so Rosemary and GStreamer's libav
+# plugin find what they use under the same names; FFmpeg links only codec libraries
+# asked for.
 ffmpeg_version="$(pacman -Q ffmpeg | awk '{print $2}' | sed 's/^[0-9]*://; s/-[^-]*$//')"
 say "rebuilding FFmpeg $ffmpeg_version without encoders"
 mkdir -p "$work"
@@ -83,6 +84,17 @@ fetch_tool() {
 }
 fetch_tool quick-sharun.sh
 fetch_tool get-debloated-pkgs.sh
+# WPE WebKit starts its helper processes from a path fixed at build time, as
+# WebKitGTK does; quick-sharun moves WebKitGTK's into the bundle and points the
+# library at them, and only needs to recognise WPE WebKit's library as one too.
+sed -i -e 's#^\([[:space:]]*\)\*libwebkit\*gtk-\*\.so\*)#\1*libwebkit*gtk-*.so*|*libWPEWebKit-*.so*)#' \
+    -e 's#^\([[:space:]]*\)\*/libwebkit\*gtk-\*\.so\*)#\1*/libwebkit*gtk-*.so*|*/libWPEWebKit-*.so*)#' \
+    "$tools/quick-sharun.sh"
+[ "$(grep -c 'libWPEWebKit-\*\.so\*)' "$tools/quick-sharun.sh")" = 2 ] ||
+    die "quick-sharun's WebKitGTK handling changed; WPE WebKit's helpers would not be bundled"
+wpe_helper="$(find /usr/lib -name WPEWebProcess -path '*wpe-webkit*' -print -quit)"
+[ -n "$wpe_helper" ] || die "WPE WebKit's helper processes are not installed"
+export WEBKIT2GTK_DIR="${wpe_helper%/*}"
 
 # Mesa without LLVM. NVIDIA's driver is never bundled; sharun loads the host's.
 say "installing Anylinux's mesa"
@@ -97,7 +109,7 @@ export DEPLOY_QT=1 DEPLOY_VULKAN=1 DEPLOY_OPENGL=1 DEPLOY_PULSE=1
 export STRACE_BINARY=stud
 
 # Libraries loaded by name at runtime, which tracing the UI can't see: SDL3 and
-# what it opens, Vulkan/EGL/GBM, FFmpeg, and the KF6 plugin Breeze uses.
+# what it opens, Vulkan/EGL/GBM, FFmpeg, WPE WebKit, and the KF6 plugin Breeze uses.
 qt_plugins="$(qmake6 -query QT_INSTALL_PLUGINS)"
 # FFmpeg under the SONAME Rosemary opens.
 soname() { objdump -p "$1" | awk '/SONAME/ { print $2 }'; }
@@ -110,6 +122,7 @@ dlopened=(
     /usr/lib/libXcursor.so.1 /usr/lib/libXfixes.so.3 /usr/lib/libXss.so.1
     /usr/lib/libpipewire-0.3.so.0 /usr/lib/libpulse.so.0 /usr/lib/libasound.so.2
     "/usr/lib/$(soname /usr/lib/libavcodec.so)" "/usr/lib/$(soname /usr/lib/libavutil.so)"
+    "/usr/lib/$(soname /usr/lib/libWPEWebKit-2.0.so)"
     /usr/lib/libxkbcommon-x11.so.0
     "$qt_plugins"/kf6/kwindowsystem/*.so
 )
@@ -144,7 +157,7 @@ cat > "$appdir/bin/stud.hook" <<'HOOK'
 # Host programs Stud starts get their original library path (desktop_entry.cpp).
 export STUD_HOST_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
 
-# Undo AppRun.lib's cache move, so the web views' cache stays in ~/.cache.
+# Undo AppRun.lib's cache move, so Stud's cache stays in ~/.cache.
 export XDG_CACHE_HOME="$CACHEDIR"
 
 # The host's theme plugin can't load against the bundled Qt; the portal's matches the desktop.
@@ -153,21 +166,6 @@ export XDG_CACHE_HOME="$CACHEDIR"
 case "${XDG_CURRENT_DESKTOP:-}" in
     *KDE*) [ -n "${QT_STYLE_OVERRIDE:-}" ] || export QT_STYLE_OVERRIDE=Breeze ;;
 esac
-HOOK
-
-# QtWebEngine's helper, resources and locales are bundled but Qt looks elsewhere
-# and aborts the web view. Looked up, since quick-sharun's layout follows the source.
-webengine_process="$(find "$appdir/bin" -maxdepth 1 -name QtWebEngineProcess -print -quit)"
-webengine_resources="$(find "$appdir" -name qtwebengine_resources.pak -printf '%h\n' -quit)"
-webengine_locales="$(find "$appdir" -type d -name qtwebengine_locales -print -quit)"
-[ -n "$webengine_process" ] || die "quick-sharun did not bundle QtWebEngineProcess"
-[ -n "$webengine_resources" ] || die "quick-sharun did not bundle QtWebEngine's resources"
-[ -n "$webengine_locales" ] || die "quick-sharun did not bundle QtWebEngine's locales"
-cat >> "$appdir/bin/stud.hook" <<HOOK
-
-export QTWEBENGINEPROCESS_PATH="\$APPDIR/${webengine_process#"$appdir"/}"
-export QTWEBENGINE_RESOURCES_PATH="\$APPDIR/${webengine_resources#"$appdir"/}"
-export QTWEBENGINE_LOCALES_PATH="\$APPDIR/${webengine_locales#"$appdir"/}"
 HOOK
 
 # Libraries an ELF in the bundle links that the bundle doesn't have.
@@ -196,13 +194,10 @@ PY
 }
 
 # Unused here: Qt's translations (only of Qt's own dialogs; Stud is in English),
-# WebEngine's other languages (pages are unaffected) and developer tools, and the QML
-# modules (with Quick Controls, Kirigami and Qt Labs) and PDF support the widget web
-# views never load.
+# and the QML modules (with Quick Controls, Kirigami and Qt Labs) and PDF support a
+# widget application never loads.
 before="$(unmet | sort)"
 find "$appdir" -name '*.qm' -delete
-find "$appdir" -path '*/qtwebengine_locales/*.pak' ! -name 'en-US.pak' -delete
-find "$appdir" -name qtwebengine_devtools_resources.pak -delete
 find "$appdir" -type d -path '*/qt6/qml' -prune -exec rm -rf {} +
 find "$appdir" \( -name 'libQt6QuickControls2*' -o -name 'libQt6QuickDialogs2*' -o -name 'libQt6QuickTemplates2*' \
     -o -name 'libQt6Labs*' -o -name 'libKirigami*' -o -name 'libQt6Pdf*' -o -name 'libqpdf.so' \) -delete

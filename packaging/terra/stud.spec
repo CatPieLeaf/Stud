@@ -45,8 +45,10 @@ Recommends:     hwdata
 Recommends:     wl-clipboard
 # A Settings switch, which does not stop Stud from running.
 Suggests:       mangohud
-# Everything else is found by rpm itself from the ELFs: Qt with QtWebEngine
-# and QtWebChannel, libcurl, zlib, libxkbcommon and libudev.
+# Rosemary opens WPE WebKit by name for the client's web pages.
+Requires:       wpewebkit
+# Everything else is found by rpm itself from the ELFs: Qt, libcurl, zlib,
+# libxkbcommon and libudev.
 
 Provides:       bundled(rosemary)
 Provides:       bundled(fidelityfx-fsr1)

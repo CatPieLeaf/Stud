@@ -19,8 +19,7 @@ conflicts=("$_pkgname")
 depends=(
   'gamemode'
   'qt6-base'
-  'qt6-webengine'
-  'qt6-webchannel'
+  'wpewebkit'
   'sdl3'
   'vulkan-icd-loader'
   'curl'

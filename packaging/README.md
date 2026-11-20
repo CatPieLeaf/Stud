@@ -50,10 +50,12 @@ opens it by name rather than linking it, so a package names it in its
 dependencies itself; nothing finds it by scanning the binaries. The same
 goes for the Vulkan loader, which the launcher opens to list the GPUs.
 
-The deb and the rpm depend on Qt 6.10 or newer, with QtWebEngine and
-QtWebChannel: the launcher shows Roblox's sign-in and web pages itself. The
-AppImage bundles all of it, down to glibc. That is the ordinary split: a
-system package should use the system Qt.
+The deb and the rpm depend on Qt 6.10 or newer, and on WPE WebKit, which
+Rosemary opens by name to show Roblox's sign-in and web pages. The rpm
+requires it, from Terra (Fedora does not package it); the deb only recommends
+it, since Ubuntu has none and would refuse the package. The AppImage and the
+Flatpak bundle all of it, down to glibc in the AppImage. That is the ordinary
+split: a system package should use the system's libraries.
 
 GameMode and MangoHud are suggested, not required: both are Settings
 switches, and neither stops Stud from running.

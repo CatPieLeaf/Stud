@@ -14,8 +14,6 @@ the source and is missing from this file, so this list cannot quietly go stale.
 |---|---|---|
 | `STUD_ROSEMARY` | unset | The Rosemary executable to run the client with, instead of the one installed with Stud or found on `PATH`. |
 | `STUD_LOG_FILE` | unset | The session log. Stud sets it at launch and writes its own output and the client's there; set beforehand, Stud uses that file instead of making one under `~/.local/state/stud/logs`. |
-| `STUD_WEBVIEW_FD` | set by Rosemary | Internal: the socket Rosemary hands the web view helper (`stud --webview-helper`) it starts. Not for setting by hand. |
-| `STUD_WEBVIEW_WINDOWS` | unset | `1`: the client's web pages (sign-in, Studio's panels) open as windows of their own on the desktop, as before 2.0.2, instead of being drawn inside the client's window by the web view helper. |
 | `STUD_TEST_CLIENT` | unset | Tests only: the Roblox `.app` `code_signature_test` checks, instead of the Player Stud installed. |
 | `STUD_TEST_IDENTIFIER` | unset | Tests only: the code identifier that client is signed as, `com.Roblox.RobloxStudio` for Studio; the Player's when unset. |
 | `STUD_HOST_LD_LIBRARY_PATH` | unset | The host's `LD_LIBRARY_PATH`, restored for programs Stud starts on the desktop's behalf. A bundle sets this. |

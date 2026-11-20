@@ -47,8 +47,6 @@
           buildInputs = with pkgs; [
             qt6.qtbase
             qt6.qtwayland
-            qt6.qtwebengine
-            qt6.qtwebchannel
             openssl
             libsecret
           ];

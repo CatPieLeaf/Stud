@@ -133,24 +133,29 @@ The launcher stays for the whole session as the client's parent, so there is alw
 
 ```bash
 sudo dnf install cmake ninja-build gcc-c++ git cargo glslc \
-  qt6-qtbase-devel qt6-qtwebengine-devel qt6-qtwebchannel-devel \
+  qt6-qtbase-devel \
   libcurl-devel openssl-devel libsecret-devel zlib-devel systemd-devel \
-  libxkbcommon-devel SDL3
+  libxkbcommon-devel SDL3 wpewebkit
 ```
+
+`wpewebkit` comes from [Terra](https://terra.fyralabs.com); Fedora itself does not package WPE WebKit.
 
 <details>
 <summary>Debian / Ubuntu</summary>
 
 ```bash
 sudo apt install cmake ninja-build build-essential git glslc \
-  qt6-base-dev qt6-webengine-dev qt6-webchannel-dev \
-  libgles-dev libcurl4-openssl-dev libssl-dev libsecret-1-dev zlib1g-dev libudev-dev libxkbcommon-dev libsdl3-0
+  qt6-base-dev \
+  libgles-dev libcurl4-openssl-dev libssl-dev libsecret-1-dev zlib1g-dev libudev-dev libxkbcommon-dev libsdl3-0 \
+  libwpewebkit-2.0-1
 ```
+
+Ubuntu has no WPE WebKit 2.0; without it the client's sign-in and web pages stay blank, so use the AppImage or the Flatpak there.
 
 Ubuntu's cargo is older than Rosemary needs; install Rust with [rustup](https://rustup.rs) instead.
 </details>
 
-Rosemary needs Rust 1.99 or newer, and SDL 3.4 and FFmpeg at runtime. See [its README](https://github.com/microlift/rosemary#building).
+Rosemary needs Rust 1.99 or newer, and SDL 3.4, FFmpeg and WPE WebKit at runtime. See [its README](https://github.com/microlift/rosemary#building).
 
 ### 2 - Build and run
 
@@ -337,8 +342,7 @@ chmod +x Stud-x86_64.AppImage
 |---|---|
 | `~/.config/stud/` | `config.json`, and `flags.json` if you hand-write FFlag overrides; Stud writes them into the client's `ClientAppSettings.json` at launch. `flag-profiles/` holds saved FFlag profiles, and `customizations/` (`studio-customizations/` for Studio) the files laid over Roblox's own content |
 | `~/.local/share/stud/client/` | the macOS client, as Roblox's servers ship it |
-| `~/.local/share/stud/prefix/` | Rosemary's prefix: Roblox's own settings, login and data |
-| `~/.local/share/stud/webview/`, `~/.cache/stud/webview/` | the sign-in and web pages Stud shows for the client: their cookies, and their cache |
+| `~/.local/share/stud/prefix/` | Rosemary's prefix: Roblox's own settings, login and data, and the cookies and cache of the client's web pages |
 | `~/.local/state/stud/logs/` | one log per session, Stud's and the client's. This is the file to read when something goes wrong, and the one to attach to a bug report |
 
 In a Flatpak these live under the sandbox's own home, so `~/.config/stud/` becomes `~/.var/app/io.github.catpieleaf.Stud/config/stud/` and the rest follow.

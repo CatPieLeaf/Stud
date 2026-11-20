@@ -22,7 +22,6 @@
 #include "stud1_cleanup.h"
 #include "tray.h"
 #include "login_keyring.h"
-#include "webview_host.h"
 #include "stud/session_log.h"
 #include "stud/settings.h"
 #include "stud/stud_paths.h"
@@ -393,21 +392,6 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
         env.insert(QStringLiteral("ROSEMARY_WINDOW_STATE"),
                    state + (product == stud::ui::client::Product::Studio ? QStringLiteral("/window-studio")
                                                                          : QStringLiteral("/window")));
-    }
-    // Web views draw inside the client window through the web view helper.
-    // STUD_WEBVIEW_WINDOWS=1 shows them as separate windows instead.
-    if (env.value(QStringLiteral("STUD_WEBVIEW_WINDOWS")) == QLatin1String("1")) {
-        if (const QString socket = stud::ui::webview::listen(); !socket.isEmpty()) {
-            env.insert(QStringLiteral("STUD_WEBVIEW_SOCKET"), socket);
-        }
-    } else {
-        // In the AppImage, the bare binary can't find its bundled libraries.
-        const QString appdir = qEnvironmentVariable("APPDIR");
-        const QString launcher = appdir + QStringLiteral("/bin/stud");
-        env.insert(QStringLiteral("STUD_WEBVIEW_HELPER"),
-                   !appdir.isEmpty() && QFileInfo(launcher).isExecutable() ? launcher
-                                                                          : QCoreApplication::applicationFilePath());
-        env.remove(QStringLiteral("STUD_WEBVIEW_SOCKET"));
     }
     if (settings.background_fps != stud::config::kBackgroundFpsNoLimit) {
         env.insert(QStringLiteral("ROSEMARY_BACKGROUND_FPS"),
@@ -1089,11 +1073,6 @@ void show_crash_dialog(const QString& which_process) {
 int main(int argc, char** argv) {
     keep_mangohud_out_of_this_process();
 
-    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
-    if (argc > 1 && std::string(argv[1]) == "--webview-helper") {
-        return stud::ui::webview::run_helper(argc, argv);
-    }
-
     QApplication app(argc, argv);
     app.setWindowIcon(QIcon(":/stud-logo-color.png"));
     // Wayland finds the icon through app_id; the client reports the same id.
@@ -1117,6 +1096,10 @@ int main(int argc, char** argv) {
                                "and customizations were kept. Log in to Roblox again in the new client.")
                     .arg(size));
         }
+    }
+    // QtWebEngine's profile, unused since Rosemary shows web views with WPE WebKit.
+    for (const std::string& dir : {stud::paths::data_dir(), stud::paths::cache_dir()}) {
+        QDir(QString::fromStdString(dir) + QStringLiteral("/webview")).removeRecursively();
     }
 
     if (argc > 1 && std::string(argv[1]) == "--install-desktop-entry") {

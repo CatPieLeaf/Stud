@@ -61,7 +61,7 @@ afterwards.
 ## Testing it locally
 
 ```sh
-flatpak install -y flathub org.kde.Sdk//6.11 org.kde.Platform//6.11 io.qt.qtwebengine.BaseApp//6.11
+flatpak install -y flathub org.kde.Sdk//6.11 org.kde.Platform//6.11
 flatpak-builder --force-clean --user --install build-flatpak \
   packaging/flatpak/io.github.catpieleaf.Stud.yml
 flatpak run io.github.catpieleaf.Stud

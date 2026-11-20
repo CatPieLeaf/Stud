@@ -1,5 +1,4 @@
-# WebEngineWidgets and WebChannel show the client's web views.
-find_package(Qt6 REQUIRED COMPONENTS Widgets DBus Network WebEngineWidgets WebChannel)
+find_package(Qt6 REQUIRED COMPONENTS Widgets DBus Network)
 add_library(stud_ui_notifications STATIC
     src/notifications.cpp
 )
@@ -85,14 +84,12 @@ add_executable(stud-ui
     src/update_check.cpp
     src/tray.cpp
     src/loading_screen.cpp
-    src/webview_host.cpp
     src/log_export.cpp
     src/launcher_portal.cpp
     src/login_keyring.cpp
     resources/resources.qrc
 )
 target_link_libraries(stud-ui PRIVATE Qt6::Widgets Qt6::Network Qt6::DBus
-                                       Qt6::WebEngineWidgets Qt6::WebChannel
                                        stud_ui_gpu_enum stud_ui_notifications stud_ui_mono_icon
                                        stud_ui_launch_uri stud_ui_log_archive stud_ui_mac_client
                                        stud_ui_stud1_cleanup PkgConfig::LIBSECRET)

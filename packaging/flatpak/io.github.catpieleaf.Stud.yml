@@ -1,6 +1,4 @@
 app-id: io.github.catpieleaf.Stud
-base: io.qt.qtwebengine.BaseApp
-base-version: '6.11'
 runtime: org.kde.Platform
 runtime-version: '6.11'
 sdk: org.kde.Sdk
@@ -13,16 +11,8 @@ finish-args:
   - --socket=wayland
   - --socket=fallback-x11
   - --socket=pulseaudio
-  - --env=QTWEBENGINEPROCESS_PATH=/app/bin/QtWebEngineProcess
-  - --env=QTWEBENGINE_RESOURCES_PATH=/app/resources
-  - --env=QTWEBENGINE_LOCALES_PATH=/app/translations/qtwebengine_locales
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.freedesktop.Notifications
-
-cleanup-commands:
-  - /app/cleanup-BaseApp.sh
-  - find /app/translations/qtwebengine_locales -name '*.pak' ! -name 'en-US.pak' -delete
-  - rm -f /app/resources/qtwebengine_devtools_resources.pak
 
 add-extensions:
   org.freedesktop.Platform.ffmpeg-full:
@@ -68,6 +58,59 @@ modules:
       - /share/man
       - /share/bash-completion
 
+  # WebKit's build scripts need Ruby; nothing of it is shipped.
+  - name: ruby
+    config-opts:
+      - --disable-install-doc
+    cleanup:
+      - '*'
+    sources:
+      - type: archive
+        url: https://cache.ruby-lang.org/pub/ruby/3.4/ruby-3.4.13.tar.xz
+        sha256: 6474dff9c02ea685fc44877a4807a27366bf109b176dad182108bb8c96d09589
+
+  # Rosemary shows the client's web pages with WPE WebKit, which no runtime has.
+  # Only its Wayland platform is built; what needs libraries the runtime lacks is off.
+  - name: wpewebkit
+    buildsystem: cmake-ninja
+    # Line tables only: GCC 15's variable tracking crashes on WebCore, and full
+    # debug info needs gigabytes per compile.
+    build-options:
+      cflags: -g1
+      cxxflags: -g1
+    config-opts:
+      - -DPORT=WPE
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DENABLE_DOCUMENTATION=OFF
+      - -DENABLE_INTROSPECTION=OFF
+      - -DENABLE_MINIBROWSER=OFF
+      - -DENABLE_API_TESTS=OFF
+      - -DENABLE_WEBDRIVER=OFF
+      - -DENABLE_WPE_LEGACY_API=OFF
+      - -DENABLE_WPE_PLATFORM_DRM=OFF
+      - -DENABLE_WPE_PLATFORM_HEADLESS=OFF
+      - -DENABLE_WPE_QT_API=OFF
+      - -DENABLE_BUBBLEWRAP_SANDBOX=OFF
+      - -DENABLE_GAMEPAD=OFF
+      - -DENABLE_SPEECH_SYNTHESIS=OFF
+      - -DENABLE_SPELLCHECK=OFF
+      - -DUSE_FLITE=OFF
+      - -DUSE_LIBHYPHEN=OFF
+      - -DUSE_AVIF=OFF
+      - -DUSE_JPEGXL=OFF
+      - -DUSE_WOFF2=OFF
+      - -DUSE_LIBBACKTRACE=OFF
+      - -DUSE_SYSPROF_CAPTURE=OFF
+      - -DUSE_SYSTEM_UNIFDEF=OFF
+    cleanup:
+      - /include
+      - /lib/pkgconfig
+      - /share/wpe-webkit-2.0
+    sources:
+      - type: archive
+        url: https://wpewebkit.org/releases/wpewebkit-2.54.2.tar.xz
+        sha256: f3284e19e47fcb5ac8c63c2e1c113dbd65b2423eb8a545f5b345707829004f56
+
   - name: rosemary
     buildsystem: simple
     build-options:
@@ -84,7 +127,7 @@ modules:
     sources:
       - type: git
         url: https://github.com/CatPieLeaf/rosemary-stud.git
-        commit: 5a9f71e4689145be5248d1312048d199941fbf61
+        commit: ec1071bce446d64ad133ed3ae18dc4908c10b381
       - type: archive
         url: https://static.rust-lang.org/dist/2026-11-12/rust-1.100.0-x86_64-unknown-linux-gnu.tar.xz
         sha256: 98ee6bec240e1cfe944f17e7092412dc5ef6e008484bb668c6936d35a7d15acd

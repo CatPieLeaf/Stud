@@ -26,7 +26,7 @@ namespace stud::ui::stud1 {
 namespace {
 
 // Everything Stud 1.x wrote under the data and cache dirs, none of 2.0's (client/,
-// prefix/, studio/, icons/, webview/, history.json; webview/ in cache).
+// prefix/, studio/, icons/, history.json).
 constexpr const char* kData[] = {
     "apk",           // the imported Roblox APK
     "files",         // the Android engine's files directory

@@ -15,8 +15,7 @@ Two checks:
     A soname no package owns is a real error: it would not resolve on a
     user's machine either. One whose owner is undeclared is reported and
     does not fail, because Arch satisfies it transitively (libstdc++ and
-    libgcc through gcc-libs, the Qt libraries through qt6-webengine) and
-    namcap accepts exactly that. Read the list when adding a dependency;
+    libgcc through gcc-libs) and namcap accepts exactly that. Read the list when adding a dependency;
     declaring what is linked directly is still better packaging.
 
 Resolving a soname needs Arch's own file database, so that half runs only

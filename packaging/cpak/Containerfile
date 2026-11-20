@@ -14,7 +14,7 @@ FROM fedora:44 AS build
 
 RUN dnf install -y --setopt=install_weak_deps=False \
         gcc-c++ cmake ninja-build git pkgconf-pkg-config gzip \
-        qt6-qtbase-devel qt6-qtwebengine-devel qt6-qtwebchannel-devel \
+        qt6-qtbase-devel \
         rust cargo glslc libcurl-devel openssl-devel libsecret-devel zlib-devel systemd-devel libxkbcommon-devel \
     && dnf clean all
 
@@ -25,10 +25,12 @@ RUN cmake -S /src -B /build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 
 FROM fedora:44
 
-# What the launcher and Rosemary need at run time. SDL3, the Vulkan loader
-# and FFmpeg are opened by name, so nothing would pull them in by itself.
-RUN dnf install -y --setopt=install_weak_deps=False \
-        qt6-qtbase-gui qt6-qtwebengine qt6-qtwebchannel \
+# What the launcher and Rosemary need at run time. SDL3, the Vulkan loader,
+# FFmpeg and WPE WebKit are opened by name, so nothing would pull them in by
+# itself. WPE WebKit is in Terra, not Fedora.
+RUN dnf install -y --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release \
+    && dnf install -y --setopt=install_weak_deps=False \
+        qt6-qtbase-gui wpewebkit \
         SDL3 vulkan-loader mesa-vulkan-drivers mesa-libEGL mesa-libgbm \
         libcurl zlib libxkbcommon libxkbcommon-x11 systemd-libs \
         libX11 libXext libdecor \

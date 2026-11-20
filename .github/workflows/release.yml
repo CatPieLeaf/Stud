@@ -85,7 +85,7 @@ jobs:
         run: |
           dnf install -y --setopt=install_weak_deps=False --setopt=max_parallel_downloads=10 \
             gcc-c++ cmake ninja-build git pkgconf-pkg-config rpm-build gzip \
-            qt6-qtbase-devel qt6-qtwebengine-devel qt6-qtwebchannel-devel \
+            qt6-qtbase-devel \
             rust cargo glslc libcurl-devel openssl-devel libsecret-devel zlib-devel systemd-devel libxkbcommon-devel \
             curl tar xz zstd python3 findutils cpio
 
@@ -305,7 +305,7 @@ jobs:
           set -eux
           # git for fetching miniz.
           pacman -Syu --noconfirm --needed base-devel cmake ninja git \
-              qt6-base qt6-webengine qt6-webchannel openssl libsecret
+              qt6-base openssl libsecret
           cmake -S /work -B /tmp/qtonly -G Ninja -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX=/usr -DSTUD_BUILD_ROSEMARY=OFF -DSTUD_BUILD_TESTS=OFF \
               -DSTUD_VERSION="$STUD_VERSION"
@@ -399,7 +399,7 @@ jobs:
           pacman -Syu --noconfirm --needed \
             base-devel cmake ninja git python curl zstd nasm vulkan-headers \
             rust shaderc sdl3 ffmpeg \
-            qt6-base qt6-webengine qt6-webchannel qt6-wayland breeze openssl libsecret \
+            qt6-base qt6-wayland breeze wpewebkit openssl libsecret \
             vulkan-icd-loader libglvnd mesa libx11 libxext libxi libxrandr \
             libxcursor libxfixes libxss wayland libxkbcommon libxkbcommon-x11 libdecor \
             systemd-libs pipewire libpulse alsa-lib \
@@ -445,8 +445,8 @@ jobs:
 
   deb:
     # Qt symbols are versioned, so a package runs only on the Qt it was linked
-    # against or newer. Built on ubuntu:26.04, the oldest with Qt 6.9 (WebEngine
-    # profiles), SDL 3.4 and glibc 2.43; the step below checks the binary's floor.
+    # against or newer. Built on ubuntu:26.04, the oldest with Qt 6.9, SDL 3.4 and
+    # glibc 2.43; the step below checks the binary's floor.
     # Its Rust is too old for Rosemary, so setup installs rustup's stable.
     name: deb
     permissions:
@@ -463,8 +463,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config git curl ca-certificates \
             file dpkg-dev tar xz-utils zstd python3 \
-            qt6-base-dev qt6-base-dev-tools qt6-webengine-dev qt6-webengine-dev-tools \
-            qt6-webchannel-dev libgles-dev \
+            qt6-base-dev qt6-base-dev-tools libgles-dev \
             glslc libcurl4-openssl-dev libssl-dev libsecret-1-dev zlib1g-dev libudev-dev libxkbcommon-dev
 
       - uses: actions/checkout@v7
@@ -579,11 +578,22 @@ jobs:
         run: |
           ! grep -q PLACEHOLDER packaging/flatpak/io.github.catpieleaf.Stud.yml
 
-      - name: Build and bundle
+      - name: Work out the WPE cache key
+        # --install-deps-from below fetches the runtime the manifest names, not the image's.
         run: |
-          # --install-deps-from fetches the runtime the manifest names, not the image's.
           flatpak remote-add --if-not-exists --system flathub \
             https://dl.flathub.org/repo/flathub.flatpakrepo
+          echo "WPE_KEY=$(tools/flatpak-wpe-cache-key.sh)" >> "$GITHUB_ENV"
+
+      - name: Restore the WPE build
+        # Saved from main by the Dependency cache workflow; on a miss WPE is built here.
+        uses: actions/cache/restore@v6
+        with:
+          path: .flatpak-builder
+          key: ${{ env.WPE_KEY }}
+
+      - name: Build and bundle
+        run: |
           flatpak-builder --force-clean --disable-rofiles-fuse \
             --install-deps-from=flathub \
             --repo=flatpak-repo build-dir \

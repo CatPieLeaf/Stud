@@ -35,10 +35,11 @@ set(CPACK_RPM_PACKAGE_LICENSE "AGPL-3.0-or-later")
 set(CPACK_RPM_PACKAGE_GROUP "Amusements/Games")
 set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
 # Autoreqprov is off, so every library is listed: by SONAME where linked, by
-# package where opened at runtime (SDL3, the Vulkan loader, FFmpeg). Fedora's
-# and RPM Fusion's FFmpeg both provide libavcodec-free and libavutil-free.
+# package where opened at runtime (SDL3, the Vulkan loader, FFmpeg, WPE WebKit).
+# Fedora's and RPM Fusion's FFmpeg both provide libavcodec-free and
+# libavutil-free; WPE WebKit comes from Terra.
 set(CPACK_RPM_PACKAGE_REQUIRES
-    "qt6-qtbase-gui, qt6-qtwebengine, qt6-qtwebchannel, vulkan-loader, SDL3 >= 3.4.0, libcurl.so.4()(64bit), libcrypto.so.3()(64bit), libsecret-1.so.0()(64bit), libz.so.1()(64bit), libxkbcommon.so.0()(64bit), libudev.so.1()(64bit), libavcodec-free, libavutil-free, gamemode")
+    "qt6-qtbase-gui, wpewebkit, vulkan-loader, SDL3 >= 3.4.0, libcurl.so.4()(64bit), libcrypto.so.3()(64bit), libsecret-1.so.0()(64bit), libz.so.1()(64bit), libxkbcommon.so.0()(64bit), libudev.so.1()(64bit), libavcodec-free, libavutil-free, gamemode")
 set(CPACK_RPM_PACKAGE_SUGGESTS "mangohud")
 set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
 set(CPACK_RPM_PACKAGE_AUTOREQPROV " no")
@@ -92,10 +93,10 @@ libqt6widgets6 (>= 6.10) | libqt6widgets6t64 (>= 6.10), \
 libqt6opengl6 (>= 6.10) | libqt6opengl6t64 (>= 6.10), \
 libqt6network6 (>= 6.10) | libqt6network6t64 (>= 6.10), \
 libqt6dbus6 (>= 6.10) | libqt6dbus6t64 (>= 6.10), \
-libqt6webenginewidgets6 (>= 6.10) | libqt6webenginewidgets6t64 (>= 6.10), \
-libqt6webchannel6 (>= 6.10) | libqt6webchannel6t64 (>= 6.10), \
 libvulkan1, libsdl3-0 (>= 3.4.0), libcurl4t64 | libcurl4, libssl3t64 | libssl3, libsecret-1-0, zlib1g, libxkbcommon0, libudev1, ffmpeg, gamemode")
-set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mangohud")
+# WPE WebKit shows the client's web pages; Ubuntu has no WPE WebKit 2.0, so
+# requiring it would leave the package uninstallable there.
+set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "libwpewebkit-2.0-1, mangohud")
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
 set(CPACK_DEBIAN_PACKAGE_GENERATE_SHLIBS OFF)
 
