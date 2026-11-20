@@ -1,24 +1,14 @@
 # Fills the caches releases restore: Rosemary's Cargo downloads, and the Flatpak's
 # WPE WebKit build (its modules before Rosemary). Only the default branch's caches
-# are visible to every ref, so this runs on main and releases only restore. Each run
-# deletes every other cache, so nothing stale is picked up, and the schedule keeps
-# the current ones from GitHub's eviction of caches unused for a week.
+# are visible to every ref, so run it from main; releases only restore. Each run
+# deletes every other cache, so nothing stale is picked up. GitHub evicts caches
+# unused for a week, so run it before a release after a quiet spell.
 
 name: Dependency cache
 
 on:
+  # Manual only.
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - CMakeLists.txt
-      - packaging/flatpak/io.github.catpieleaf.Stud.yml
-      - tools/flatpak-wpe-cache-key.sh
-      - .github/actions/setup/action.yml
-      - .github/workflows/dependency-cache.yml
-  # Also catches Rosemary's branch and the Flatpak SDK moving.
-  schedule:
-    - cron: "0 6 * * 1,4"
 
 permissions:
   contents: read
