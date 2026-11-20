@@ -123,10 +123,6 @@ private:
     QStringList changed_;
 };
 
-}  // namespace
-
-namespace {
-
 // The last good set, and the trial marker.
 QString guard_dir(client::Product product) {
     return QString::fromStdString(stud::paths::data_dir()) +

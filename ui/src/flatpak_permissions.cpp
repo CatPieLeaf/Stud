@@ -70,7 +70,7 @@ QStringList missing_controller_permissions(const QString& flatpak_info) {
 
 QString flatpak_override_command(const QStringList& options) {
     return QStringLiteral("flatpak override --user %1 %2")
-        .arg(options.join(QLatin1Char(' ')), qEnvironmentVariable("FLATPAK_ID", QStringLiteral("io.github.catpieleaf.Stud")));
+        .arg(options.join(QLatin1Char(' ')), qEnvironmentVariable("FLATPAK_ID", QStringLiteral(STUD_APP_ID)));
 }
 
 }  // namespace stud::ui

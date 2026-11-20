@@ -1,5 +1,9 @@
 #include "discord_rpc.h"
 
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -79,28 +83,17 @@ bool send_frame(uint32_t opcode, const std::string& payload) {
     return n == static_cast<ssize_t>(frame.size());
 }
 
-// Game and creator names can contain quotes and backslashes.
-std::string escape(const std::string& s) {
-    std::string out;
-    out.reserve(s.size() + 8);
-    for (const char c : s) {
-        switch (c) {
-            case '"': out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20) {
-                    char buf[8];
-                    std::snprintf(buf, sizeof(buf), "\\u%04x", c);
-                    out += buf;
-                } else {
-                    out += c;
-                }
-        }
-    }
-    return out;
+std::string json(const QJsonObject& object) {
+    return QJsonDocument(object).toJson(QJsonDocument::Compact).toStdString();
+}
+
+// SET_ACTIVITY with `activity`; without one, the presence is cleared.
+std::string set_activity(const QJsonObject* activity) {
+    QJsonObject args{{QStringLiteral("pid"), qint64(::getpid())}};
+    if (activity != nullptr) args.insert(QStringLiteral("activity"), *activity);
+    return json({{QStringLiteral("cmd"), QStringLiteral("SET_ACTIVITY")},
+                 {QStringLiteral("args"), args},
+                 {QStringLiteral("nonce"), QString::number(++g_nonce)}});
 }
 
 void close_connection() {
@@ -132,8 +125,8 @@ bool connect_locked() {
         if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0) {
             ::fcntl(fd, F_SETFL, ::fcntl(fd, F_GETFL) | O_NONBLOCK);
             g_fd = fd;
-            const std::string handshake =
-                "{\"v\":1,\"client_id\":\"" + escape(g_application_id) + "\"}";
+            const std::string handshake = json(
+                {{QStringLiteral("v"), 1}, {QStringLiteral("client_id"), QString::fromStdString(g_application_id)}});
             if (!send_frame(kOpHandshake, handshake)) {
                 close_connection();
                 return false;
@@ -149,50 +142,32 @@ bool connect_locked() {
 
 void send_presence_locked() {
     const DiscordActivity& a = g_presence;
-    std::string activity = "{";
-    const auto field = [&activity](const char* key, const std::string& value) {
-        if (value.empty()) return;
-        if (activity.size() > 1) activity += ",";
-        activity += "\"" + std::string(key) + "\":\"" + escape(value) + "\"";
+    // Empty fields are left out.
+    const auto put = [](QJsonObject& object, const char* key, const std::string& value) {
+        if (!value.empty()) object.insert(QLatin1String(key), QString::fromStdString(value));
     };
-    field("details", a.details);
-    field("state", a.state);
-    std::string assets;
-    const auto asset = [&assets](const char* key, const std::string& value) {
-        if (value.empty()) return;
-        if (!assets.empty()) assets += ",";
-        assets += "\"" + std::string(key) + "\":\"" + escape(value) + "\"";
-    };
-    asset("large_image", a.large_image);
-    asset("large_text", a.large_text);
-    asset("small_image", a.small_image);
-    asset("small_text", a.small_text);
-    if (!assets.empty()) activity += std::string(activity.size() > 1 ? "," : "") + "\"assets\":{" + assets + "}";
-    if (a.start > 0 || a.end > 0) {
-        std::string timestamps;
-        if (a.start > 0) timestamps += "\"start\":" + std::to_string(a.start);
-        if (a.end > 0) timestamps += std::string(timestamps.empty() ? "" : ",") + "\"end\":" + std::to_string(a.end);
-        activity += std::string(activity.size() > 1 ? "," : "") + "\"timestamps\":{" + timestamps + "}";
+    QJsonObject activity;
+    put(activity, "details", a.details);
+    put(activity, "state", a.state);
+    QJsonObject assets;
+    put(assets, "large_image", a.large_image);
+    put(assets, "large_text", a.large_text);
+    put(assets, "small_image", a.small_image);
+    put(assets, "small_text", a.small_text);
+    if (!assets.isEmpty()) activity.insert(QStringLiteral("assets"), assets);
+    QJsonObject timestamps;
+    if (a.start > 0) timestamps.insert(QStringLiteral("start"), qint64(a.start));
+    if (a.end > 0) timestamps.insert(QStringLiteral("end"), qint64(a.end));
+    if (!timestamps.isEmpty()) activity.insert(QStringLiteral("timestamps"), timestamps);
+    if (a.status_display >= 0) activity.insert(QStringLiteral("status_display_type"), a.status_display);
+    QJsonArray buttons;
+    for (size_t i = 0; i < a.buttons.size() && i < 2; ++i) {
+        buttons.append(QJsonObject{{QStringLiteral("label"), QString::fromStdString(a.buttons[i].first)},
+                                   {QStringLiteral("url"), QString::fromStdString(a.buttons[i].second)}});
     }
-    if (a.status_display >= 0) {
-        activity += std::string(activity.size() > 1 ? "," : "") + "\"status_display_type\":" +
-                    std::to_string(a.status_display);
-    }
-    if (!a.buttons.empty()) {
-        std::string buttons;
-        for (size_t i = 0; i < a.buttons.size() && i < 2; ++i) {
-            if (i > 0) buttons += ",";
-            buttons += "{\"label\":\"" + escape(a.buttons[i].first) + "\",\"url\":\"" +
-                       escape(a.buttons[i].second) + "\"}";
-        }
-        activity += std::string(activity.size() > 1 ? "," : "") + "\"buttons\":[" + buttons + "]";
-    }
-    activity += "}";
+    if (!buttons.isEmpty()) activity.insert(QStringLiteral("buttons"), buttons);
 
-    const std::string payload = "{\"cmd\":\"SET_ACTIVITY\",\"args\":{\"pid\":" +
-                                 std::to_string(::getpid()) + ",\"activity\":" + activity +
-                                 "},\"nonce\":\"" + std::to_string(++g_nonce) + "\"}";
-    if (!send_frame(kOpFrame, payload)) {
+    if (!send_frame(kOpFrame, set_activity(&activity))) {
         // Discord went away; keep_connected() reconnects.
         close_connection();
     }
@@ -235,10 +210,7 @@ void discord_rpc_stop() {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_application_id.clear();
     if (g_fd < 0) return;
-    const std::string payload = "{\"cmd\":\"SET_ACTIVITY\",\"args\":{\"pid\":" +
-                                 std::to_string(::getpid()) + "},\"nonce\":\"" +
-                                 std::to_string(++g_nonce) + "\"}";
-    send_frame(kOpFrame, payload);
+    send_frame(kOpFrame, set_activity(nullptr));
     close_connection();
 }
 

@@ -143,7 +143,9 @@ StudSettings load_settings(const std::string& path) {
     }
     read_string("upscaler", result.upscaler, {"ravu-ar", "sgsr-ed"});
     read_string("titleBar", result.title_bar, {"macos", "macos-no-menu", "native"});
-    read_string("displayBackend", result.display_backend, {"auto", "wayland", "x11"});
+    // Older builds wrote "auto", which meant Wayland.
+    if (at("displayBackend") == QJsonValue(QStringLiteral("auto"))) doc.insert(QStringLiteral("displayBackend"), QStringLiteral("wayland"));
+    read_string("displayBackend", result.display_backend, {"wayland", "x11"});
     int fps = 0;
     if (read_int("backgroundFps", fps, "an integer")) {
         // 0 or anything past the range (older builds wrote 241) means no limit.

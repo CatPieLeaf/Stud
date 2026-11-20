@@ -36,8 +36,6 @@ void record(const QString& place, const QString& name, const QString& icon, cons
 
 void clear();
 
-int64_t total_seconds();
-
 // "3 h 12 min", "12 min", "40 s".
 QString duration(int64_t seconds);
 

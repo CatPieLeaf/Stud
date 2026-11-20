@@ -36,6 +36,11 @@ QString flag_of(const QString& country_code) {
     return flag;
 }
 
+// The first image of a thumbnails reply.
+QString first_image_url(const QJsonObject& reply) {
+    return reply.value(QStringLiteral("data")).toArray().at(0).toObject().value(QStringLiteral("imageUrl")).toString();
+}
+
 }  // namespace
 
 GameActivity::GameActivity(const Options& options, QObject* parent)
@@ -178,32 +183,39 @@ void GameActivity::signed_in(const QString& user) {
                          "&size=150x150&format=Png&isCircular=true").arg(user),
           [this, user](const QJsonObject& reply) {
               if (user != user_id_) return;
-              avatar_ = reply.value(QStringLiteral("data")).toArray().at(0).toObject()
-                            .value(QStringLiteral("imageUrl")).toString();
+              avatar_ = first_image_url(reply);
               publish();
           });
 }
 
-void GameActivity::joined(const QString& place, const QString& job) {
-    if (place == place_ && job == job_) return;
-    // A teleport ends the server it leaves: kept in history, location dropped.
+// The game being left goes into history, and what showed about it is cleared.
+void GameActivity::close_game() {
     if (!place_.isEmpty() && options_.history_games) {
         history::record(place_, name_, icon_, job_, joined_at_, now_seconds(), location_,
                         options_.history_servers);
     }
     location_.clear();
     ++generation_;
-    place_ = place;
-    job_ = job;
+    place_.clear();
+    job_.clear();
     name_.clear();
     creator_.clear();
     icon_.clear();
+    launch_data_.clear();
+    server_ = Server::Public;
+    game_ = {};
+    game_details_ = game_state_ = game_start_ = game_end_ = false;
+}
+
+void GameActivity::joined(const QString& place, const QString& job) {
+    if (place == place_ && job == job_) return;
+    // A teleport ends the server it leaves.
+    close_game();
+    place_ = place;
+    job_ = job;
     joined_at_ = now_seconds();
     server_ = teleport_reserved_ ? Server::Reserved : Server::Public;
     teleport_reserved_ = false;
-    launch_data_.clear();
-    game_ = {};
-    game_details_ = game_state_ = game_start_ = game_end_ = false;
     std::printf("stud: joined place %s\n", qPrintable(place));
     publish();
     look_up(place);
@@ -233,12 +245,7 @@ void GameActivity::look_up(const QString& place) {
                         .arg(universe),
                     [this, generation](const QJsonObject& icons) {
                         if (generation != generation_) return;
-                        icon_ = icons.value(QStringLiteral("data"))
-                                    .toArray()
-                                    .at(0)
-                                    .toObject()
-                                    .value(QStringLiteral("imageUrl"))
-                                    .toString();
+                        icon_ = first_image_url(icons);
                         publish();
                     });
           });
@@ -246,21 +253,7 @@ void GameActivity::look_up(const QString& place) {
 
 void GameActivity::left() {
     if (place_.isEmpty()) return;
-    if (options_.history_games) {
-        history::record(place_, name_, icon_, job_, joined_at_, now_seconds(), location_,
-                        options_.history_servers);
-    }
-    location_.clear();
-    ++generation_;
-    place_.clear();
-    job_.clear();
-    name_.clear();
-    creator_.clear();
-    icon_.clear();
-    launch_data_.clear();
-    server_ = Server::Public;
-    game_ = {};
-    game_details_ = game_state_ = game_start_ = game_end_ = false;
+    close_game();
     publish();
 }
 
@@ -457,13 +450,7 @@ void GameActivity::asset_image(qint64 asset, std::function<void(const QString&)>
     fetch(QStringLiteral("https://thumbnails.roblox.com/v1/assets?assetIds=%1&size=512x512&format=Png")
               .arg(asset),
           [done = std::move(done)](const QJsonObject& json) {
-              const QString url = json.value(QStringLiteral("data"))
-                                      .toArray()
-                                      .at(0)
-                                      .toObject()
-                                      .value(QStringLiteral("imageUrl"))
-                                      .toString();
-              if (!url.isEmpty()) done(url);
+              if (const QString url = first_image_url(json); !url.isEmpty()) done(url);
           });
 }
 

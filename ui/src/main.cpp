@@ -53,11 +53,11 @@
 #include <QProcessEnvironment>
 #include <QPushButton>
 #include <QStandardPaths>
-#include <QSurfaceFormat>
 #include <QTimer>
 
 #include <algorithm>
 #include <cerrno>
+#include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -73,13 +73,9 @@
 #include <sys/syscall.h>
 #include <sched.h>
 #include <sys/stat.h>
-#include <grp.h>
 #include <unistd.h>
 
 namespace stud::ui {
-void set_tray_is_holding(bool holding);
-bool crash_dialog_is_open();
-bool session_ended_cleanly();
 void terminate_stud_session();
 void show_crash_dialog(const QString& which_process);
 }  // namespace stud::ui
@@ -90,11 +86,6 @@ namespace {
 QProcess* g_client = nullptr;
 // Set when the session was ended on purpose, so its exit is not a crash.
 bool g_stop_requested = false;
-
-enum class SessionEnd { Running, Clean, Crashed };
-SessionEnd g_session_end = SessionEnd::Running;
-bool g_tray_is_holding = false;
-bool g_crash_dialog_open = false;
 bool g_relaunch_pending = false;
 
 // The deep link holds a single-use join ticket, so it is kept out of the log.
@@ -177,6 +168,8 @@ bool another_instance_is_running() {
 }
 
 bool take_instance_lock() {
+    std::error_code ec;
+    std::filesystem::create_directories(stud::paths::runtime_dir(), ec);
     const int fd = ::open(lock_path().c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
     if (fd < 0) return true;
     if (::flock(fd, LOCK_EX | LOCK_NB) != 0) {
@@ -534,7 +527,7 @@ QDBusReply<int> register_through_portal(qint64 pid) {
 // Raise the client's main thread (Roblox's frame loop) as far as RealtimeKit,
 // or the portal's Realtime interface in Flatpak, allows. Its thread id is the pid.
 void raise_main_thread_priority(qint64 pid) {
-    const bool sandboxed = QFileInfo::exists(QStringLiteral("/.flatpak-info"));
+    const bool sandboxed = stud::config::in_flatpak();
     QDBusInterface realtime(
         sandboxed ? QStringLiteral("org.freedesktop.portal.Desktop") : QStringLiteral("org.freedesktop.RealtimeKit1"),
         sandboxed ? QStringLiteral("/org/freedesktop/portal/desktop") : QStringLiteral("/org/freedesktop/RealtimeKit1"),
@@ -568,21 +561,14 @@ KernelGpu kernel_gpu() {
         gpu.usable = true;
         return gpu;
     }
-    const QDir dri(QStringLiteral("/dev/dri"));
-    for (const QString& name : dri.entryList({QStringLiteral("renderD*")}, QDir::System)) {
-        const QByteArray path = QFile::encodeName(dri.filePath(name));
-        const int fd = ::open(path.constData(), O_RDWR | O_CLOEXEC);
-        if (fd >= 0) {
-            ::close(fd);
+    for (const stud::ui::RenderNode& node : stud::ui::render_nodes()) {
+        if (node.error == 0) {
             gpu.usable = true;
             return gpu;
         }
-        if (errno == EACCES && gpu.blocked.isEmpty()) {
-            gpu.blocked = dri.filePath(name);
-            struct stat st {};
-            if (::stat(path.constData(), &st) == 0) {
-                if (const group* owner = ::getgrgid(st.st_gid)) gpu.group = QString::fromLocal8Bit(owner->gr_name);
-            }
+        if (node.error == EACCES && gpu.blocked.isEmpty()) {
+            gpu.blocked = QString::fromStdString(node.path);
+            gpu.group = QString::fromStdString(node.group);
         }
     }
     return gpu;
@@ -622,7 +608,7 @@ QString no_gpu_reason() {
 }
 
 void register_with_gamemode(qint64 pid) {
-    const bool sandboxed = QFileInfo::exists(QStringLiteral("/.flatpak-info"));
+    const bool sandboxed = stud::config::in_flatpak();
     QDBusReply<int> reply;
     if (sandboxed) {
         reply = register_through_portal(pid);
@@ -740,22 +726,17 @@ void check_flatpak_permissions() {
 }
 
 // False when the client couldn't start; the reason has been shown.
-bool launch_game(stud::ui::client::Product product, const std::optional<QString>& deep_link) {
+bool launch_game(stud::ui::client::Product product, const std::optional<QString>& deep_link,
+                 stud::config::StudSettings settings) {
     g_product = product;
     const bool player = product == stud::ui::client::Product::Player;
-    stud::config::StudSettings settings;
-    try {
-        settings = stud::config::load_settings(stud::config::default_config_path());
-    } catch (const stud::config::SettingsError& e) {
-        std::fprintf(stderr, "%s; launching with default settings\n", e.what());
-    }
     settings.gpu.device_index = stud::ui::chosen_gpu_index(settings.gpu);
 
-    if (deep_link && another_instance_is_running() && hand_link_to_client(product, *deep_link, settings)) {
-        QMetaObject::invokeMethod(qApp, &QApplication::quit, Qt::QueuedConnection);
-        return false;
-    }
-    if (another_instance_is_running() || !take_instance_lock()) {
+    if (!take_instance_lock()) {
+        if (deep_link && hand_link_to_client(product, *deep_link, settings)) {
+            QMetaObject::invokeMethod(qApp, &QApplication::quit, Qt::QueuedConnection);
+            return false;
+        }
         QMessageBox::information(nullptr, "Stud",
                                  "Stud is already running.\n\nClose the existing window before "
                                  "starting it again.");
@@ -928,7 +909,6 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
                                "so Stud put back the last set that worked. The new ones are in %1.")
                     .arg(stud::ui::customization::disabled_folder(product)));
         }
-        g_session_end = crashed ? SessionEnd::Crashed : SessionEnd::Clean;
         stud::ui::close_loading_screen();
         if (crashed) {
             stud::ui::show_crash_dialog(QStringLiteral("Roblox"));
@@ -1024,18 +1004,8 @@ bool stud_session_is_running() {
     return another_instance_is_running();
 }
 
-void hold_for_relaunch() { g_relaunch_pending = true; }
-
-bool relaunch_is_pending() { return g_relaunch_pending; }
-
-void set_tray_is_holding(bool holding) { g_tray_is_holding = holding; }
-
-bool crash_dialog_is_open() { return g_crash_dialog_open; }
-
-bool session_ended_cleanly() { return g_session_end != SessionEnd::Crashed; }
-
 void relaunch_stud() {
-    hold_for_relaunch();
+    g_relaunch_pending = true;
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.remove(QStringLiteral("STUD_LOG_FILE"));
     if (g_layers_disable_was_set) {
@@ -1043,11 +1013,7 @@ void relaunch_stud() {
     } else if (::getenv("MANGOHUD") != nullptr || ::getenv("MANGOHUD_CONFIG") != nullptr) {
         env.remove(QStringLiteral("VK_LOADER_LAYERS_DISABLE"));
     }
-    // The AppImage file, not this process's mount.
-    const QString appimage = qEnvironmentVariable("APPIMAGE");
-    const QString program = !appimage.isEmpty() && QFileInfo::exists(appimage)
-                                ? QFileInfo(appimage).absoluteFilePath()
-                                : QCoreApplication::applicationFilePath();
+    const QString program = stud::ui::launcher_command();
     QObject::connect(qApp, &QCoreApplication::aboutToQuit, qApp, [program, env]() {
         if (g_lock_fd >= 0) {
             ::close(g_lock_fd);
@@ -1075,7 +1041,6 @@ void relaunch_stud() {
 void show_crash_dialog(const QString& which_process) {
     const QString log = QString::fromUtf8(qgetenv("STUD_LOG_FILE"));
     qApp->setQuitOnLastWindowClosed(false);
-    g_crash_dialog_open = true;
 
     auto* box = new QMessageBox;
     box->setAttribute(Qt::WA_DeleteOnClose);
@@ -1114,7 +1079,6 @@ void show_crash_dialog(const QString& which_process) {
                 }
             }
         }
-        g_crash_dialog_open = false;
         QMetaObject::invokeMethod(qApp, &QApplication::quit, Qt::QueuedConnection);
     });
     box->exec();
@@ -1125,12 +1089,6 @@ void show_crash_dialog(const QString& which_process) {
 int main(int argc, char** argv) {
     keep_mangohud_out_of_this_process();
 
-    // Don't block on the compositor's frame callback: Wayland sends none to a
-    // covered window, which froze the interface thread (Settings over the
-    // welcome page).
-    QSurfaceFormat format = QSurfaceFormat::defaultFormat();
-    format.setSwapInterval(0);
-    QSurfaceFormat::setDefaultFormat(format);
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
     if (argc > 1 && std::string(argv[1]) == "--webview-helper") {
         return stud::ui::webview::run_helper(argc, argv);
@@ -1202,7 +1160,7 @@ int main(int argc, char** argv) {
         std::printf("stud: Studio link of %zu bytes\n", std::strlen(argv[1]));
     } else if (argc > 1 && argv[1][0] != '-') {
         product = stud::ui::client::Product::Player;
-        if (stud::ui::parse_launch_uri(argv[1])) {
+        if (stud::ui::is_roblox_link(argv[1])) {
             deep_link = QString::fromUtf8(argv[1]);
             std::printf("stud: deep link of %zu bytes\n", std::strlen(argv[1]));
         } else {
@@ -1210,23 +1168,16 @@ int main(int argc, char** argv) {
         }
     }
 
-    const bool tray_wanted = [] {
-        try {
-            return stud::config::load_settings(stud::config::default_config_path()).system_tray;
-        } catch (const std::exception&) {
-            return true;
-        }
-    }();
+    stud::config::StudSettings settings;
+    try {
+        settings = stud::config::load_settings(stud::config::default_config_path());
+    } catch (const stud::config::SettingsError& e) {
+        std::fprintf(stderr, "%s; launching with default settings\n", e.what());
+    }
 
+    const bool welcome_page = !product && !settings.open_player_directly;
     if (!product) {
-        const bool directly = [] {
-            try {
-                return stud::config::load_settings(stud::config::default_config_path()).open_player_directly;
-            } catch (const std::exception&) {
-                return false;
-            }
-        }();
-        product = directly ? std::optional(stud::ui::client::Product::Player) : stud::ui::choose_product();
+        product = welcome_page ? stud::ui::choose_product() : std::optional(stud::ui::client::Product::Player);
     }
     if (!product) {
         // Closed without a choice. An open Settings stays until it is closed.
@@ -1237,7 +1188,14 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    if (!launch_game(*product, deep_link)) {
+    // The welcome page's Settings button may have changed them.
+    if (welcome_page) {
+        try {
+            settings = stud::config::load_settings(stud::config::default_config_path());
+        } catch (const stud::config::SettingsError&) {
+        }
+    }
+    if (!launch_game(*product, deep_link, settings)) {
         const QWidgetList windows = QApplication::topLevelWidgets();
         if (std::none_of(windows.begin(), windows.end(),
                          [](const QWidget* w) { return w->isVisible(); })) {
@@ -1248,13 +1206,9 @@ int main(int argc, char** argv) {
 
     // This process stays as the client's parent so it can report a crash.
     stud::ui::SettingsWindow::listenForOpenRequests();
-    if (tray_wanted) {
+    if (settings.system_tray) {
         auto* tray = new stud::ui::Tray(qApp);
-        if (tray->show()) {
-            stud::ui::set_tray_is_holding(true);
-        } else {
-            std::fprintf(stderr, "stud: no system tray available\n");
-        }
+        if (!tray->show()) std::fprintf(stderr, "stud: no system tray available\n");
     }
     app.setQuitOnLastWindowClosed(false);
     return app.exec();

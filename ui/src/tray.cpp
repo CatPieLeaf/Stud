@@ -18,6 +18,7 @@ namespace stud::ui { void terminate_stud_session(); }
 #include <QClipboard>
 #include <QDBusConnection>
 #include <QDBusMessage>
+#include <QDBusPendingCallWatcher>
 #include <QDBusReply>
 #include <QDBusVariant>
 
@@ -39,7 +40,6 @@ namespace stud::ui { void terminate_stud_session(); }
 #include <QMenu>
 #include <QMessageBox>
 #include <QFontMetrics>
-#include <QImage>
 #include <QPixmap>
 #include <QPointer>
 #include <QProcess>
@@ -110,28 +110,27 @@ bool Tray::show() {
         ask.setArguments({QStringLiteral("org.kde.StatusNotifierWatcher"),
                           QStringLiteral("RegisteredStatusNotifierItems")});
 
-        const QDBusMessage reply =
-            QDBusConnection::sessionBus().call(ask, QDBus::Block, 3000);
-        if (reply.type() == QDBusMessage::ErrorMessage) {
-            std::fprintf(stderr, "stud: could not read the tray's item list (%s)\n",
-                         qUtf8Printable(reply.errorName()));
-            return;
-        }
-
-        const QString self = QDBusConnection::sessionBus().baseService();
-        const QStringList items =
-            reply.arguments().value(0).value<QDBusVariant>().variant().toStringList();
-        // Entries read ":1.47/StatusNotifierItem"; the separator stops ":1.4" matching.
-        for (const QString& item : items) {
-            if (item.startsWith(self + QLatin1Char('/'))) {
-                std::fprintf(stderr, "stud: the tray accepted this session's icon\n");
+        auto* watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(ask, 3000));
+        QObject::connect(watcher, &QDBusPendingCallWatcher::finished, watcher, [](QDBusPendingCallWatcher* call) {
+            call->deleteLater();
+            const QDBusMessage reply = call->reply();
+            if (reply.type() == QDBusMessage::ErrorMessage) {
+                std::fprintf(stderr, "stud: could not read the tray's item list (%s)\n",
+                             qUtf8Printable(reply.errorName()));
                 return;
             }
-        }
-        std::fprintf(stderr,
-                     "stud: the tray did not take this session's icon; it holds "
-                     "%lld other item(s)\n",
-                     static_cast<long long>(items.size()));
+            const QString self = QDBusConnection::sessionBus().baseService();
+            const QStringList items = reply.arguments().value(0).value<QDBusVariant>().variant().toStringList();
+            // Entries read ":1.47/StatusNotifierItem"; the separator stops ":1.4" matching.
+            for (const QString& item : items) {
+                if (item.startsWith(self + QLatin1Char('/'))) {
+                    std::fprintf(stderr, "stud: the tray accepted this session's icon\n");
+                    return;
+                }
+            }
+            std::fprintf(stderr, "stud: the tray did not take this session's icon; it holds %lld other item(s)\n",
+                         static_cast<long long>(items.size()));
+        });
     });
 
     connect(UpdateCheck::instance(), &UpdateCheck::updateFound, this, &Tray::showUpdateAvailable);
@@ -146,17 +145,11 @@ bool Tray::show() {
 void Tray::showUpdateAvailable(const QString& latestVersion) {
     if (icon_ == nullptr || menu_ == nullptr || updateAction_ != nullptr) return;
     updateAction_ = new QAction(QStringLiteral("\u26a0\ufe0f Update Stud"), menu_);
-    connect(updateAction_, &QAction::triggered, this, [] {
-        UpdateCheck::open();
-    });
-    addUpdateEntry(updateAction_, QStringLiteral("Stud: version %1 is available").arg(latestVersion));
-}
-
-void Tray::addUpdateEntry(QAction* action, const QString& toolTip) {
+    connect(updateAction_, &QAction::triggered, this, [] { UpdateCheck::open(); });
     icon_->setIcon(QIcon(QStringLiteral(":/stud-logo-update.png")));
-    icon_->setToolTip(toolTip);
+    icon_->setToolTip(QStringLiteral("Stud: version %1 is available").arg(latestVersion));
     // At the top: the only entry that is news.
-    menu_->insertAction(menu_->actions().value(0), action);
+    menu_->insertAction(menu_->actions().value(0), updateAction_);
     menu_->insertSeparator(menu_->actions().value(1));
 }
 
@@ -221,19 +214,8 @@ void Tray::showAbout() {
         auto* side = new QVBoxLayout();
         auto* header = new QHBoxLayout();
         auto* title = new QLabel(about);
-        // Cropped to its drawn pixels so its left edge lines up with the text.
-        QImage wordmark = QImage(QStringLiteral(":/stud-title.png")).convertToFormat(QImage::Format_ARGB32);
-        QRect drawn;
-        for (int y = 0; y < wordmark.height(); ++y) {
-            const auto* row = reinterpret_cast<const QRgb*>(wordmark.constScanLine(y));
-            for (int x = 0; x < wordmark.width(); ++x) {
-                if (qAlpha(row[x]) != 0) drawn |= QRect(x, y, 1, 1);
-            }
-        }
-        if (!drawn.isEmpty()) {
-            title->setPixmap(QPixmap::fromImage(wordmark.copy(drawn))
-                                 .scaledToHeight(kIcon * 42 / 100, Qt::SmoothTransformation));
-        }
+        title->setPixmap(QPixmap(QStringLiteral(":/stud-title.png"))
+                             .scaledToHeight(kIcon * 42 / 100, Qt::SmoothTransformation));
         auto* lead = new QVBoxLayout();
         lead->addWidget(title, 0, Qt::AlignLeft | Qt::AlignTop);
         lead->addSpacing(about->style()->pixelMetric(QStyle::PM_LayoutVerticalSpacing));

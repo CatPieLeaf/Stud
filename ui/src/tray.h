@@ -33,7 +33,6 @@ private slots:
 private:
     QMenu* menu_ = nullptr;
     QAction* updateAction_ = nullptr;
-    void addUpdateEntry(QAction* action, const QString& toolTip);
 
     QSystemTrayIcon* icon_ = nullptr;
 };

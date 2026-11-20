@@ -53,8 +53,8 @@ struct StudSettings {
     // "macos" (with menu bar), "macos-no-menu", or "native" (the desktop's).
     std::string title_bar = "macos-no-menu";
 
-    // "auto"/"wayland" or "x11" (XWayland). Only read where both are available.
-    std::string display_backend = "auto";
+    // "wayland" or "x11" (XWayland). Only read where both are available.
+    std::string display_backend = "wayland";
 
     // FPS while no Roblox window has focus; kBackgroundFpsNoLimit for none.
     int background_fps = 30;

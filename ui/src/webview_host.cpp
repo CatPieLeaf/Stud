@@ -210,8 +210,7 @@ class Page;
 
 class View : public QWebEngineView {
 public:
-    View(Connection* connection, const QString& id, const QString& agent, bool developer);
-    ~View() override;
+    View(Connection* connection, const QString& id, const QString& agent);
 
     Connection* connection;
     const QString id;
@@ -239,6 +238,12 @@ public:
     void send_state();
     void finish_busy() {
         if (--busy == 0 && dead) deleteLater();
+    }
+    // Gone for the client; deleted once no call waits on it.
+    void retire() {
+        dead = true;
+        hide();
+        if (busy == 0) deleteLater();
     }
 
 protected:
@@ -334,10 +339,7 @@ private:
         closed_ = true;
         for (auto& [call, wait] : waits_) wait.loop->quit();
         for (const auto& [key, view] : views_) {
-            if (view.isNull()) continue;
-            view->dead = true;
-            view->hide();
-            if (view->busy == 0) view->deleteLater();
+            if (!view.isNull()) view->retire();
         }
         views_.clear();
         // A waiting call deletes it instead.
@@ -395,7 +397,7 @@ void Bridge::post(const QString& name, const QString& json) {
     view_->connection->send({QStringLiteral("message"), view_->id, name, json, view_->page()->url().toString()});
 }
 
-View::View(Connection* connection_, const QString& id_, const QString& agent_, bool developer)
+View::View(Connection* connection_, const QString& id_, const QString& agent_)
     : connection(connection_), id(id_), agent(agent_) {
     setAttribute(Qt::WA_DeleteOnClose, false);
     setWindowTitle(QStringLiteral("Stud"));
@@ -416,7 +418,6 @@ View::View(Connection* connection_, const QString& id_, const QString& agent_, b
     setPage(page_);
     page_->settings()->setAttribute(QWebEngineSettings::JavascriptCanOpenWindows, true);
     page_->settings()->setAttribute(QWebEngineSettings::LocalContentCanAccessFileUrls, true);
-    (void)developer;
     bridge = new Bridge(this);
     auto* channel = new QWebChannel(page_);
     channel->registerObject(QStringLiteral("studBridge"), bridge);
@@ -472,8 +473,6 @@ View::View(Connection* connection_, const QString& id_, const QString& agent_, b
         send_state();
     });
 }
-
-View::~View() = default;
 
 void View::rebuild_scripts() {
     QWebEngineScriptCollection& collection = page_->scripts();
@@ -580,12 +579,8 @@ void Connection::handle(const QStringList& m) {
         return;
     }
     if (kind == QLatin1String("create")) {
-        if (View* old = view(m.value(1))) {
-            old->dead = true;
-            old->hide();
-            if (old->busy == 0) old->deleteLater();
-        }
-        views_[m.value(1)] = new View(this, m.value(1), m.value(2), m.value(3) == QLatin1String("1"));
+        if (View* old = view(m.value(1))) old->retire();
+        views_[m.value(1)] = new View(this, m.value(1), m.value(2));
         return;
     }
     if (kind == QLatin1String("cookies_get")) {
@@ -626,9 +621,7 @@ void Connection::handle(const QStringList& m) {
     if (target == nullptr) return;
     if (kind == QLatin1String("destroy")) {
         views_.erase(m.value(1));
-        target->dead = true;
-        target->hide();
-        if (target->busy == 0) target->deleteLater();
+        target->retire();
     } else if (kind == QLatin1String("scripts")) {
         target->scripts.clear();
         const int count = m.value(2).toInt();

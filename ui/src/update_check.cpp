@@ -9,6 +9,7 @@
 #include <QUrl>
 
 #include <cstdio>
+#include <memory>
 #include <sys/stat.h>
 
 #include <QJsonDocument>
@@ -85,34 +86,34 @@ void update_appimage(const QString& target) {
             return;
         }
         const QString partial = target + QStringLiteral(".download");
-        auto* out = new QFile(partial);
-        if (!out->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            delete out;
+        struct Download {
+            QFile out;
+            // Hashed as written, so a short write (full disk) fails the check.
+            QCryptographicHash hash{QCryptographicHash::Sha1};
+            bool write_failed = false;
+        };
+        auto download = std::make_shared<Download>();
+        download->out.setFileName(partial);
+        if (!download->out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
             manager->deleteLater();
             fail_update(QStringLiteral("%1 is not writable.").arg(QFileInfo(target).absolutePath()));
             return;
         }
         send_notification(QStringLiteral("Updating Stud"),
                           QStringLiteral("Downloading Stud %1.").arg(UpdateCheck::latestVersion()));
-        // Hashed as written, so a short write (full disk) fails the check.
-        auto* hash = new QCryptographicHash(QCryptographicHash::Sha1);
-        auto* write_failed = new bool(false);
-        const auto take = [out, hash, write_failed](const QByteArray& chunk) {
-            if (out->write(chunk) != chunk.size()) *write_failed = true;
-            hash->addData(chunk);
+        const auto take = [download](const QByteArray& chunk) {
+            if (download->out.write(chunk) != chunk.size()) download->write_failed = true;
+            download->hash.addData(chunk);
         };
         QNetworkReply* image = manager->get(release_request(QString::fromLatin1(kAppImage)));
         QObject::connect(image, &QNetworkReply::readyRead, image, [image, take] { take(image->readAll()); });
         QObject::connect(image, &QNetworkReply::finished, UpdateCheck::instance(),
-                         [image, out, hash, write_failed, take, manager, target, partial, sha1] {
+                         [image, download, take, manager, target, partial, sha1] {
             take(image->readAll());
-            bool written = !*write_failed && out->flush() && image->error() == QNetworkReply::NoError;
-            delete write_failed;
-            out->close();
-            written = written && out->error() == QFileDevice::NoError;
-            const QByteArray got = hash->result().toHex();
-            delete out;
-            delete hash;
+            bool written = !download->write_failed && download->out.flush() && image->error() == QNetworkReply::NoError;
+            download->out.close();
+            written = written && download->out.error() == QFileDevice::NoError;
+            const QByteArray got = download->hash.result().toHex();
             image->deleteLater();
             manager->deleteLater();
             if (!written || got != sha1) {

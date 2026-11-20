@@ -16,8 +16,6 @@
 #include <dirent.h>
 #include <cstring>
 #include <cerrno>
-#include <sys/stat.h>
-#include <grp.h>
 #include <fcntl.h>
 #include <gnu/libc-version.h>
 #include <linux/input.h>
@@ -166,7 +164,7 @@ void report_cpu() {
 void report_gpus(const stud::config::StudSettings& settings) {
     const auto gpus = stud::ui::enumerate_gpus();
     if (gpus.empty()) {
-        line("gpu in use", "none (no Vulkan-capable device or loader)");
+        line("gpu in use", "none (the kernel lists no GPU)");
     } else {
         // The chosen one first; a saved choice that no longer exists shows as a mismatch.
         const stud::ui::GpuInfo* chosen = nullptr;
@@ -178,8 +176,8 @@ void report_gpus(const stud::config::StudSettings& settings) {
         } else {
             line("gpu in use", "[" + std::to_string(settings.gpu.device_index) + "] " +
                                    settings.gpu.device_name +
-                                   ", NOT FOUND now; the loader reports " +
-                                   std::to_string(gpus.size()) + " device(s)");
+                                   ", NOT FOUND now; the kernel lists " +
+                                   std::to_string(gpus.size()) + " GPU(s)");
         }
         bool first = true;
         for (const auto& gpu : gpus) {
@@ -189,30 +187,25 @@ void report_gpus(const stud::config::StudSettings& settings) {
             first = false;
         }
     }
-    // The kernel's view shows whether a driver is loaded for a device Vulkan didn't list.
     std::string nodes;
+    const auto add = [&nodes](const std::string& text) {
+        if (!nodes.empty()) nodes += ", ";
+        nodes += text;
+    };
     if (DIR* dir = ::opendir("/dev/dri")) {
         while (const dirent* entry = ::readdir(dir)) {
-            const std::string name = entry->d_name;
-            if (name.rfind("render", 0) != 0 && name.rfind("card", 0) != 0) continue;
-            if (!nodes.empty()) nodes += ", ";
-            nodes += name;
-            // An unreadable render node makes Mesa fall back to software rendering.
-            if (name.rfind("render", 0) == 0) {
-                const std::string path = "/dev/dri/" + name;
-                const int fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
-                if (fd >= 0) {
-                    ::close(fd);
-                } else {
-                    const int why = errno;
-                    struct stat st {};
-                    const group* owner = ::stat(path.c_str(), &st) == 0 ? ::getgrgid(st.st_gid) : nullptr;
-                    nodes += std::string(" (cannot open: ") + std::strerror(why) +
-                             (owner ? std::string(", group ") + owner->gr_name : std::string()) + ")";
-                }
-            }
+            if (std::string(entry->d_name).rfind("card", 0) == 0) add(entry->d_name);
         }
         ::closedir(dir);
+    }
+    // An unopenable render node makes Mesa fall back to software rendering.
+    for (const stud::ui::RenderNode& node : stud::ui::render_nodes()) {
+        std::string text = node.path.substr(node.path.rfind('/') + 1);
+        if (node.error != 0) {
+            text += std::string(" (cannot open: ") + std::strerror(node.error) +
+                    (node.group.empty() ? std::string() : ", group " + node.group) + ")";
+        }
+        add(text);
     }
     line("drm nodes", nodes);
 }
@@ -288,7 +281,9 @@ void build_diagnostics() {
         line("renderer", settings.renderer);
         line("presentation", settings.presentation);
         line("title bar", settings.title_bar);
-        line("display backend", settings.display_backend);
+        // Without a Wayland display the setting doesn't apply: SDL uses X11.
+        line("display backend", qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY") ? std::string("x11 (no Wayland)")
+                                                                               : settings.display_backend);
         line("background fps", settings.background_fps == stud::config::kBackgroundFpsNoLimit
                                    ? std::string("unlimited")
                                    : std::to_string(settings.background_fps));
@@ -327,7 +322,6 @@ void build_diagnostics() {
                 "\"Export logs\" entry packs them into a single archive.\n",
                 stud::paths::log_dir().c_str());
     out("\n=== end of diagnostics ===\n\n");
-    std::fflush(stdout);
 }
 
 void write_diagnostics() {

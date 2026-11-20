@@ -53,8 +53,7 @@ class Emblem : public QWidget {
 public:
     Emblem(int cube, int title, int overlap, QWidget* parent) : QWidget(parent), cube_size_(cube) {
         // One scale, fixed at creation, so later DPI changes don't resize the images.
-        ratio_ = devicePixelRatioF();
-        const qreal ratio = ratio_;
+        const qreal ratio = devicePixelRatioF();
         logo_ = QPixmap(QStringLiteral(":/stud-title.png"))
                     .scaledToWidth(int(title * ratio), Qt::SmoothTransformation)
                     .toImage()
@@ -74,13 +73,22 @@ public:
 
         clock_.start();
         next_shine_ = next_shine_after(0);
-        auto* timer = new QTimer(this);
-        connect(timer, &QTimer::timeout, this, [this] { step(); });
-        timer->start(16);
+        frames_.setInterval(16);
+        connect(&frames_, &QTimer::timeout, this, [this] { step(); });
         step();
     }
 
 protected:
+    // Frames only while it can be seen.
+    void showEvent(QShowEvent* event) override {
+        frames_.start();
+        QWidget::showEvent(event);
+    }
+    void hideEvent(QHideEvent* event) override {
+        frames_.stop();
+        QWidget::hideEvent(event);
+    }
+
     void paintEvent(QPaintEvent*) override {
         QImage frame = logo_;
         const double t = seconds() - shine_start_;
@@ -148,8 +156,8 @@ private:
         update();
     }
 
+    QTimer frames_;
     QImage logo_;
-    qreal ratio_ = 1.0;
     int cube_size_;
     QPointF anchor_;
     QPointF pivot_;
@@ -248,8 +256,8 @@ std::optional<client::Product> choose_product() {
     layout->setSizeConstraint(QLayout::SetFixedSize);
 
     constexpr int kCube = 96;
-    constexpr int kTitle = 160;
-    constexpr int kOverlap = 18;
+    constexpr int kTitle = 138;
+    constexpr int kOverlap = 8;
     constexpr int kGap = 40;
     auto* header = new Emblem(kCube, kTitle, kOverlap, &dialog);
 

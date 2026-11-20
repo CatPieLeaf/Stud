@@ -33,7 +33,6 @@ add_library(stud_ui_launch_uri STATIC
     src/launch_uri.cpp
 )
 target_include_directories(stud_ui_launch_uri PUBLIC src)
-target_link_libraries(stud_ui_launch_uri PUBLIC Qt6::Core)
 
 add_library(stud_ui_gpu_enum STATIC
     src/gpu_enum.cpp
@@ -69,7 +68,7 @@ target_include_directories(stud_ui_mac_client PUBLIC src)
 target_include_directories(stud_ui_mac_client PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(stud_ui_mac_client PUBLIC Qt6::Core Qt6::Gui Qt6::Network stud_config miniz
                                          PRIVATE OpenSSL::Crypto)
-target_compile_definitions(stud_ui_mac_client PRIVATE STUD_VERSION="${STUD_VERSION}")
+target_compile_definitions(stud_ui_mac_client PRIVATE STUD_VERSION="${STUD_VERSION}" STUD_APP_ID="${STUD_APP_ID}")
 
 add_executable(stud-ui
     src/main.cpp

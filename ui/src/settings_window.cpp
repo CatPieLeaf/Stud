@@ -15,6 +15,7 @@
 #include "diagnose.h"
 #include "mac_client.h"
 #include "roblox_settings.h"
+#include "stud1_cleanup.h"
 #include "notifications.h"
 #include "flatpak_permissions.h"
 #include "stud/settings.h"
@@ -52,6 +53,7 @@
 #include <QHBoxLayout>
 #include <functional>
 #include <memory>
+#include <thread>
 #include <QDateTime>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -88,9 +90,6 @@ void relaunch_stud();
 namespace stud::ui {
 
 namespace {
-// A monochrome freedesktop icon that follows the colour scheme.
-QIcon themed(const char* name, QStyle::StandardPixmap fallback) { return mono_icon(name, fallback); }
-
 void select_data(QComboBox* combo, const std::string& value) {
     const int index = combo->findData(QString::fromStdString(value));
     combo->setCurrentIndex(index >= 0 ? index : 0);
@@ -356,7 +355,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         auto* open = new QPushButton(product == client::Product::Studio ? "Open Studio customizations folder"
                                                                         : "Open Player customizations folder",
                                      this);
-        open->setIcon(themed("folder-open", QStyle::SP_DirOpenIcon));
+        open->setIcon(mono_icon("folder-open", QStyle::SP_DirOpenIcon));
         connect(open, &QPushButton::clicked, this, [product] {
             QDir().mkpath(customization::folder(product));
             QDesktopServices::openUrl(QUrl::fromLocalFile(customization::folder(product)));
@@ -373,15 +372,14 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         // Bloxstrap's classic versions, downloaded from its repository: "" for one
         // "Classic" button, or the variants each with its own button.
         QStringList classic = {};
-        bool has_classic = false;
     };
     const Row rows[] = {
-        {customization::Part::Cursor, "Cursor", "Images (*.png)", true, {"2006", "2013"}, true},
+        {customization::Part::Cursor, "Cursor", "Images (*.png)", true, {"2006", "2013"}},
         {customization::Part::ShiftLock, "Shift lock", "Images (*.png)", true},
         {customization::Part::EmoteWheel, "Emote wheel", nullptr, true},
         {customization::Part::DeathSound, "Death sound", "Sounds (*.ogg)", false},
-        {customization::Part::CharacterSounds, "Character sounds", nullptr, false, {""}, true},
-        {customization::Part::AvatarBackground, "Avatar background", nullptr, false, {""}, true},
+        {customization::Part::CharacterSounds, "Character sounds", nullptr, false, {""}},
+        {customization::Part::AvatarBackground, "Avatar background", nullptr, false, {""}},
         {customization::Part::Font, "Game font", "Fonts (*.ttf *.otf)", false},
         {customization::Part::MonoFont, "Code font", "Fonts (*.ttf *.otf)", false},
     };
@@ -398,7 +396,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         int column = 2;
         if (r.filter != nullptr) {
             auto* choose = new QPushButton("Choose file...", this);
-            choose->setIcon(themed("document-open", QStyle::SP_DialogOpenButton));
+            choose->setIcon(mono_icon("document-open", QStyle::SP_DialogOpenButton));
             connect(choose, &QPushButton::clicked, this, [this, r, refresh] {
                 const QString file = QFileDialog::getOpenFileName(this, QString::fromLatin1(r.label),
                                                                   QString(), QString::fromLatin1(r.filter));
@@ -413,7 +411,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         }
         if (r.colour) {
             auto* colour = new QPushButton("Colour...", this);
-            colour->setIcon(themed("color-picker", QStyle::SP_DesktopIcon));
+            colour->setIcon(mono_icon("color-picker", QStyle::SP_DesktopIcon));
             connect(colour, &QPushButton::clicked, this, [this, r, refresh] {
                 const QColor picked = QColorDialog::getColor(Qt::white, this, QString::fromLatin1(r.label));
                 if (!picked.isValid()) return;
@@ -426,7 +424,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
             grid->addWidget(colour, row, column++);
         }
         auto* reset = new QPushButton("Default", this);
-        reset->setIcon(themed("edit-undo", QStyle::SP_DialogResetButton));
+        reset->setIcon(mono_icon("edit-undo", QStyle::SP_DialogResetButton));
         reset->setToolTip("Go back to the default");
         connect(reset, &QPushButton::clicked, this, [this, r, refresh] {
             customization::remove(r.part);
@@ -434,11 +432,11 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
             refresh();
         });
         grid->addWidget(reset, row, 4);
-        if (r.has_classic) {
+        if (!r.classic.isEmpty()) {
             auto* classics = new QHBoxLayout();
             for (const QString& variant : r.classic) {
                 auto* button = new QPushButton(variant.isEmpty() ? QStringLiteral("Classic") : variant, this);
-                button->setIcon(themed("download", QStyle::SP_ArrowDown));
+                button->setIcon(mono_icon("download", QStyle::SP_ArrowDown));
                 button->setToolTip("Downloads Bloxstrap's classic version from its GitHub repository.");
                 connect(button, &QPushButton::clicked, this, [this, r, refresh, variant, button] {
                     button->setEnabled(false);
@@ -460,7 +458,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     }
     customizeTab->addLayout(grid);
     auto* importOther = new QPushButton("Import from Bloxstrap, Fishstrap or Froststrap...", this);
-    importOther->setIcon(themed("document-import", QStyle::SP_DialogOpenButton));
+    importOther->setIcon(mono_icon("document-import", QStyle::SP_DialogOpenButton));
     importOther->setToolTip("Choose that bootstrapper's folder: its customizations are copied in, and its "
                             "FastFlags added to the FFlags tab.");
     connect(importOther, &QPushButton::clicked, this, &SettingsWindow::onImportBootstrapperClicked);
@@ -490,7 +488,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     about->addWidget(cube, 0, Qt::AlignHCenter);
     auto* logo = new QLabel(this);
     logo->setPixmap(QPixmap(":/stud-title.png")
-                        .scaled(160, 160, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+                        .scaled(138, 138, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     logo->setAlignment(Qt::AlignCenter);
     about->addWidget(logo);
     auto* aboutText = new QLabel(
@@ -530,7 +528,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     connect(restartButton_, &QPushButton::clicked, this, &SettingsWindow::onRestartClicked);
 
     auto* saveButton = new QPushButton("Save", this);
-    saveButton->setIcon(themed("document-save", QStyle::SP_DialogSaveButton));
+    saveButton->setIcon(mono_icon("document-save", QStyle::SP_DialogSaveButton));
     buttonRow->addWidget(saveButton);
     layout->addLayout(buttonRow);
     connect(saveButton, &QPushButton::clicked, this, &SettingsWindow::onSaveClicked);
@@ -632,6 +630,12 @@ std::optional<QJsonObject> parse_flags(const QString& text, QString* error) {
     return doc.object();
 }
 
+// `imported` over `current`: a flag both have takes the imported value.
+QJsonObject merged_flags(QJsonObject current, const QJsonObject& imported) {
+    for (auto it = imported.begin(); it != imported.end(); ++it) current.insert(it.key(), it.value());
+    return current;
+}
+
 QString format_flags(const QJsonObject& flags) {
     return flags.isEmpty() ? QString()
                            : QString::fromUtf8(QJsonDocument(flags).toJson(QJsonDocument::Indented));
@@ -719,9 +723,9 @@ void SettingsWindow::buildFlagsTab(QVBoxLayout* presets_tab, QVBoxLayout* tab) {
     auto* load = new QPushButton("Load", this);
     auto* saveAs = new QPushButton("Save as...", this);
     auto* remove = new QPushButton("Delete", this);
-    load->setIcon(themed("document-open", QStyle::SP_DialogOpenButton));
-    saveAs->setIcon(themed("document-save-as", QStyle::SP_DialogSaveButton));
-    remove->setIcon(themed("edit-delete", QStyle::SP_TrashIcon));
+    load->setIcon(mono_icon("document-open", QStyle::SP_DialogOpenButton));
+    saveAs->setIcon(mono_icon("document-save-as", QStyle::SP_DialogSaveButton));
+    remove->setIcon(mono_icon("edit-delete", QStyle::SP_TrashIcon));
     profiles->addWidget(new QLabel("Profile", this));
     profiles->addWidget(profileBox, 1);
     profiles->addWidget(load);
@@ -759,12 +763,12 @@ void SettingsWindow::buildFlagsTab(QVBoxLayout* presets_tab, QVBoxLayout* tab) {
     tab->addWidget(flagsWarning_);
     auto* buttons = new QHBoxLayout();
     auto* importButton = new QPushButton("Import JSON...", this);
-    importButton->setIcon(themed("document-import", QStyle::SP_DialogOpenButton));
+    importButton->setIcon(mono_icon("document-import", QStyle::SP_DialogOpenButton));
     importButton->setToolTip("Add the flags of a JSON file to these; a flag both have takes the "
                              "imported value.");
     connect(importButton, &QPushButton::clicked, this, &SettingsWindow::onImportFlagsClicked);
     auto* clean = new QPushButton("Clean list", this);
-    clean->setIcon(themed("edit-clear", QStyle::SP_DialogDiscardButton));
+    clean->setIcon(mono_icon("edit-clear", QStyle::SP_DialogDiscardButton));
     clean->setToolTip("Remove the flags Roblox ignores: those not on its allowlist.");
     connect(clean, &QPushButton::clicked, this, [edit_flags] {
         edit_flags([](QJsonObject& f) {
@@ -871,9 +875,9 @@ void SettingsWindow::buildRobloxTab(QVBoxLayout* tab) {
     tab->addWidget(status);
     auto* buttons = new QHBoxLayout();
     auto* save = new QPushButton("Save to Roblox", this);
-    save->setIcon(themed("document-save", QStyle::SP_DialogSaveButton));
+    save->setIcon(mono_icon("document-save", QStyle::SP_DialogSaveButton));
     auto* reload = new QPushButton("Reload", this);
-    reload->setIcon(themed("view-refresh", QStyle::SP_BrowserReload));
+    reload->setIcon(mono_icon("view-refresh", QStyle::SP_BrowserReload));
     buttons->addWidget(save);
     buttons->addWidget(reload);
     buttons->addStretch();
@@ -915,21 +919,6 @@ void SettingsWindow::buildRobloxTab(QVBoxLayout* tab) {
     });
 }
 
-namespace {
-
-qint64 folder_size(const QString& path) {
-    qint64 total = 0;
-    QDirIterator it(path, QDir::Files | QDir::Hidden | QDir::System | QDir::NoSymLinks,
-                    QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        it.next();
-        total += it.fileInfo().size();
-    }
-    return total;
-}
-
-}  // namespace
-
 void SettingsWindow::buildStudioTab(QVBoxLayout* tab) {
     tab->addWidget(new QLabel("<b>FastFlags</b>", this));
     auto* note = new QLabel(
@@ -948,7 +937,7 @@ void SettingsWindow::buildStudioTab(QVBoxLayout* tab) {
     tab->addWidget(editor, 1);
     auto* row = new QHBoxLayout();
     auto* save = new QPushButton("Save Studio's flags", this);
-    save->setIcon(themed("document-save", QStyle::SP_DialogSaveButton));
+    save->setIcon(mono_icon("document-save", QStyle::SP_DialogSaveButton));
     auto* status = new QLabel(this);
     status->setWordWrap(true);
     row->addWidget(save);
@@ -956,12 +945,9 @@ void SettingsWindow::buildStudioTab(QVBoxLayout* tab) {
     tab->addLayout(row);
     connect(save, &QPushButton::clicked, this, [editor, status, path] {
         const QByteArray text = editor->toPlainText().toUtf8();
-        QJsonParseError error{};
-        const QJsonDocument doc = QJsonDocument::fromJson(text, &error);
-        if (!text.trimmed().isEmpty() && !doc.isObject()) {
-            status->setText(error.error != QJsonParseError::NoError
-                                ? QStringLiteral("Not saved: %1, at character %2.").arg(error.errorString()).arg(error.offset)
-                                : QStringLiteral("Not saved: the flags must be one JSON object, {...}."));
+        QString error;
+        if (!parse_flags(QString::fromUtf8(text), &error)) {
+            status->setText(QStringLiteral("Not saved: %1.").arg(error));
             return;
         }
         QDir().mkpath(QFileInfo(path).absolutePath());
@@ -977,11 +963,11 @@ void SettingsWindow::buildStudioTab(QVBoxLayout* tab) {
     tab->addWidget(new QLabel("<b>Folders</b>", this));
     auto* folders = new QHBoxLayout();
     auto* plugins = new QPushButton("Open the Plugins folder", this);
-    plugins->setIcon(themed("folder-open", QStyle::SP_DirOpenIcon));
+    plugins->setIcon(mono_icon("folder-open", QStyle::SP_DirOpenIcon));
     plugins->setToolTip("Where Studio loads local plugins from, such as Rojo's: Documents/Roblox/Plugins "
                         "inside Stud's macOS environment.");
     auto* documents = new QPushButton("Open Documents", this);
-    documents->setIcon(themed("folder-documents", QStyle::SP_DirOpenIcon));
+    documents->setIcon(mono_icon("folder-documents", QStyle::SP_DirOpenIcon));
     documents->setToolTip("Studio's Documents folder inside Stud's macOS environment.");
     folders->addWidget(plugins);
     folders->addWidget(documents);
@@ -1011,15 +997,15 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
     tab->addWidget(logsNote);
     auto* logs = new QHBoxLayout();
     auto* exportAll = new QPushButton("Export logs", this);
-    exportAll->setIcon(themed("document-export", QStyle::SP_DialogSaveButton));
+    exportAll->setIcon(mono_icon("document-export", QStyle::SP_DialogSaveButton));
     exportAll->setToolTip("Every session log, and Roblox's own logs from the same days, as one .tar.gz.");
     auto* exportLatest = new QPushButton("Export the latest log", this);
-    exportLatest->setIcon(themed("text-x-generic", QStyle::SP_FileIcon));
+    exportLatest->setIcon(mono_icon("text-x-generic", QStyle::SP_FileIcon));
     exportLatest->setToolTip("Only the newest session's log, as a .log file.");
     auto* openLogs = new QPushButton("Open the logs folder", this);
-    openLogs->setIcon(themed("folder-open", QStyle::SP_DirOpenIcon));
+    openLogs->setIcon(mono_icon("folder-open", QStyle::SP_DirOpenIcon));
     auto* copyInfo = new QPushButton("Copy system info", this);
-    copyInfo->setIcon(themed("edit-copy", QStyle::SP_FileDialogDetailedView));
+    copyInfo->setIcon(mono_icon("edit-copy", QStyle::SP_FileDialogDetailedView));
     copyInfo->setToolTip("Stud's and Rosemary's versions, the system, GPU and settings: the top of every "
                          "session log, ready to paste into a report. Nothing secret is in it.");
     logs->addWidget(exportAll);
@@ -1039,10 +1025,10 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
     tab->addWidget(storageNote);
     auto* storage = new QHBoxLayout();
     auto* clearCache = new QPushButton(this);
-    clearCache->setIcon(themed("edit-clear", QStyle::SP_DialogResetButton));
+    clearCache->setIcon(mono_icon("edit-clear", QStyle::SP_DialogResetButton));
     clearCache->setToolTip("The web pages' cache. Nothing in it is needed; it fills up again as pages load.");
     auto* clearData = new QPushButton(this);
-    clearData->setIcon(themed("edit-delete", QStyle::SP_TrashIcon));
+    clearData->setIcon(mono_icon("edit-delete", QStyle::SP_TrashIcon));
     clearData->setToolTip("The Roblox client and Studio, the macOS environment, your Roblox login and your "
                           "game history. The next launch downloads and sets up everything again.");
     storage->addWidget(clearCache);
@@ -1051,15 +1037,15 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
     tab->addLayout(storage);
     auto* repair = new QHBoxLayout();
     auto* repairRoblox = new QPushButton("Repair Roblox", this);
-    repairRoblox->setIcon(themed("tools-wizard", QStyle::SP_BrowserReload));
+    repairRoblox->setIcon(mono_icon("tools-wizard", QStyle::SP_BrowserReload));
     repairRoblox->setToolTip("Removes the installed Roblox and Studio, so the next launch downloads them "
                              "fresh. Your Roblox login and the macOS environment stay.");
     auto* resetPrefix = new QPushButton("Reset the macOS environment", this);
-    resetPrefix->setIcon(themed("view-refresh", QStyle::SP_BrowserReload));
+    resetPrefix->setIcon(mono_icon("view-refresh", QStyle::SP_BrowserReload));
     resetPrefix->setToolTip("Removes the macOS environment Roblox runs in, which the next launch sets up "
                             "again. Roblox itself stays; your Roblox login and Roblox's own settings go.");
     auto* openData = new QPushButton("Open the data folder", this);
-    openData->setIcon(themed("folder-open", QStyle::SP_DirOpenIcon));
+    openData->setIcon(mono_icon("folder-open", QStyle::SP_DirOpenIcon));
     repair->addWidget(repairRoblox);
     repair->addWidget(resetPrefix);
     repair->addWidget(openData);
@@ -1069,7 +1055,7 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
     tab->addSpacing(fontMetrics().height());
     tab->addWidget(new QLabel("<b>Settings</b>", this));
     auto* resetAll = new QPushButton("Reset all settings", this);
-    resetAll->setIcon(themed("edit-undo", QStyle::SP_DialogResetButton));
+    resetAll->setIcon(mono_icon("edit-undo", QStyle::SP_DialogResetButton));
     resetAll->setToolTip("Every setting here back to its default, as right-clicking each one does. "
                          "Nothing changes until you save.");
     tab->addWidget(resetAll, 0, Qt::AlignLeft);
@@ -1081,10 +1067,24 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
 
     const QString cache = QString::fromStdString(stud::paths::cache_dir());
     const QString data = QString::fromStdString(stud::paths::data_dir());
-    const auto label_sizes = [this, clearCache, clearData, cache, data] {
-        const QLocale here;
-        clearCache->setText(QStringLiteral("Clear Stud's cache (%1)").arg(here.formattedDataSize(folder_size(cache))));
-        clearData->setText(QStringLiteral("Clear Stud's data (%1)").arg(here.formattedDataSize(folder_size(data))));
+    const auto label_sizes = [clearCache, clearData, cache, data] {
+        clearCache->setText(QStringLiteral("Clear Stud's cache"));
+        clearData->setText(QStringLiteral("Clear Stud's data"));
+        QPointer<QPushButton> cache_button = clearCache;
+        QPointer<QPushButton> data_button = clearData;
+        std::thread([cache_button, data_button, cache, data] {
+            const qint64 cache_bytes = disk_size(cache);
+            const qint64 data_bytes = disk_size(data);
+            QMetaObject::invokeMethod(qApp, [cache_button, data_button, cache_bytes, data_bytes] {
+                const QLocale here;
+                if (cache_button) {
+                    cache_button->setText(QStringLiteral("Clear Stud's cache (%1)").arg(here.formattedDataSize(cache_bytes)));
+                }
+                if (data_button) {
+                    data_button->setText(QStringLiteral("Clear Stud's data (%1)").arg(here.formattedDataSize(data_bytes)));
+                }
+            });
+        }).detach();
     };
     label_sizes();
 
@@ -1199,7 +1199,9 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
     const QString when = QStringLiteral("yyyy-MM-dd hh:mm");
     const auto refresh = [list, total, when] {
         list->clear();
+        qint64 played = 0;
         for (const history::Entry& e : history::load()) {
+            played += e.seconds_played;
             auto* item = new QTreeWidgetItem(list);
             item->setText(0, e.name.isEmpty() ? QStringLiteral("Place %1").arg(e.place) : e.name);
             item->setText(1, history::duration(e.seconds_played));
@@ -1217,20 +1219,20 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
                 server->setData(0, Qt::UserRole + 2, s.job);
             }
         }
-        total->setText(QStringLiteral("Time played in all: %1").arg(history::duration(history::total_seconds())));
+        total->setText(QStringLiteral("Time played in all: %1").arg(history::duration(played)));
     };
     refresh();
 
     auto* buttons = new QHBoxLayout();
     auto* join = new QPushButton("Join", this);
     auto* shortcut = new QPushButton("Create shortcut", this);
-    join->setIcon(themed("media-playback-start", QStyle::SP_MediaPlay));
-    shortcut->setIcon(themed("list-add", QStyle::SP_FileDialogNewFolder));
+    join->setIcon(mono_icon("media-playback-start", QStyle::SP_MediaPlay));
+    shortcut->setIcon(mono_icon("list-add", QStyle::SP_FileDialogNewFolder));
     shortcut->setToolTip("Adds the game to the application menu; it opens straight into the game.");
     auto* reload = new QPushButton("Refresh", this);
-    reload->setIcon(themed("view-refresh", QStyle::SP_BrowserReload));
+    reload->setIcon(mono_icon("view-refresh", QStyle::SP_BrowserReload));
     auto* forget = new QPushButton("Clear history", this);
-    forget->setIcon(themed("edit-clear-history", QStyle::SP_DialogDiscardButton));
+    forget->setIcon(mono_icon("edit-clear-history", QStyle::SP_DialogDiscardButton));
     forget->setToolTip("Forgets every game and server here, and the time played.");
     buttons->addWidget(join);
     buttons->addWidget(shortcut);
@@ -1270,7 +1272,7 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
         const QString icon_url = list->currentItem()->data(0, Qt::UserRole + 1).toString();
         // Flatpak can't write the desktop's menu, so the portal adds the launcher
         // after the user confirms.
-        if (QFileInfo::exists(QStringLiteral("/.flatpak-info"))) {
+        if (stud::config::in_flatpak()) {
             QPointer<QLabel> status = statusLabel_;
             const auto ask = [status, place, name](const QByteArray& image_file) {
                 QByteArray png = launcher_portal::icon_png(image_file);
@@ -1368,8 +1370,7 @@ void SettingsWindow::onImportBootstrapperClicked() {
         const auto imported = parse_flags(QString::fromUtf8(flags_file.readAll()), &error);
         auto current = parse_flags(flagsEdit_->toPlainText(), &error);
         if (imported && current) {
-            for (auto i = imported->begin(); i != imported->end(); ++i) current->insert(i.key(), i.value());
-            flagsEdit_->setPlainText(format_flags(*current));
+            flagsEdit_->setPlainText(format_flags(merged_flags(*current, *imported)));
             flags = int(imported->size());
         }
     }
@@ -1399,9 +1400,7 @@ void SettingsWindow::onImportFlagsClicked() {
             QString("Fix the flags above before importing: %1").arg(error).toHtmlEscaped());
         return;
     }
-    QJsonObject merged = *current;
-    for (auto it = imported->begin(); it != imported->end(); ++it) merged.insert(it.key(), it.value());
-    flagsEdit_->setPlainText(format_flags(merged));
+    flagsEdit_->setPlainText(format_flags(merged_flags(*current, *imported)));
     statusLabel_->setText(QString("Imported %1 flag(s). Save to keep them.").arg(imported->size()));
 }
 
@@ -1521,12 +1520,12 @@ void SettingsWindow::showIdleStatus() {
     statusLabel_->setText(lines.join(QStringLiteral("<br>")));
 }
 
-// Save, stop the session and start it again. Settings are read at session start.
 void SettingsWindow::paintRestartIcon() {
     restartButton_->setIcon(mono_icon("view-refresh", QStyle::SP_BrowserReload));
     if (restartButton_->icon().isNull()) restartButton_->setText(QStringLiteral("Restart"));
 }
 
+// Save, stop the session and start it again. Settings are read at session start.
 void SettingsWindow::onRestartClicked() {
     // Save first; a failed save doesn't restart with the old settings.
     if (!onSaveClicked()) return;

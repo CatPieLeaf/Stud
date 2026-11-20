@@ -6,6 +6,13 @@
 // Removes Stud 1.x's Android engine, APK, assets and caches (gigabytes) on 2.0's
 // first run. config.json, flags.json, customizations and logs carry over in place;
 // the login doesn't, since the macOS client signs in itself.
+namespace stud::ui {
+
+// What `path` takes on disk, links not followed.
+qint64 disk_size(const QString& path);
+
+}  // namespace stud::ui
+
 namespace stud::ui::stud1 {
 
 struct Removed {

@@ -89,12 +89,6 @@ void record(const QString& place, const QString& name, const QString& icon, cons
 
 void clear() { QFile::remove(path()); }
 
-int64_t total_seconds() {
-    int64_t total = 0;
-    for (const Entry& e : load()) total += e.seconds_played;
-    return total;
-}
-
 QString duration(int64_t seconds) {
     if (seconds >= 3600) {
         return QStringLiteral("%1 h %2 min").arg(seconds / 3600).arg((seconds % 3600) / 60);

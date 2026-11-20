@@ -33,8 +33,6 @@ QString share_root() {
     return {};
 }
 
-// The AppImage file itself ($APPIMAGE): the mount the executable runs from is gone after exit.
-
 QString rewrite_exec(const QString& value, const QString& program) {
     const int space = value.indexOf(QLatin1Char(' '));
     const QString args = space < 0 ? QString() : value.mid(space);
@@ -171,6 +169,7 @@ void remove_legacy_entry(const QString& apps_dir) {
 
 }  // namespace
 
+// The AppImage file itself: the mount the executable runs from is gone after exit.
 QString launcher_command() {
     const QString appimage = qEnvironmentVariable("APPIMAGE");
     if (!appimage.isEmpty() && QFileInfo::exists(appimage)) {

@@ -61,6 +61,7 @@ private:
     void follow_studio_logs();
     void read_studio_log(const QString& path);
     void look_up(const QString& place);
+    void close_game();
 
     void joined(const QString& place, const QString& job);
     void server(const QString& address);

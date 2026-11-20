@@ -1,11 +1,17 @@
 #include "gpu_enum.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
+
+#include <fcntl.h>
+#include <grp.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace stud::ui {
 
@@ -112,6 +118,28 @@ bool vulkan_available() {
         }
     }
     return false;
+}
+
+std::vector<RenderNode> render_nodes() {
+    std::vector<RenderNode> nodes;
+    std::error_code listed;
+    for (const auto& entry : std::filesystem::directory_iterator("/dev/dri", listed)) {
+        if (entry.path().filename().string().rfind("renderD", 0) == 0) nodes.push_back({entry.path().string()});
+    }
+    std::sort(nodes.begin(), nodes.end(), [](const RenderNode& a, const RenderNode& b) { return a.path < b.path; });
+    for (RenderNode& node : nodes) {
+        const int fd = ::open(node.path.c_str(), O_RDWR | O_CLOEXEC);
+        if (fd >= 0) {
+            ::close(fd);
+            continue;
+        }
+        node.error = errno;
+        struct stat st {};
+        if (::stat(node.path.c_str(), &st) == 0) {
+            if (const group* owner = ::getgrgid(st.st_gid)) node.group = owner->gr_name;
+        }
+    }
+    return nodes;
 }
 
 uint32_t default_gpu_index() {

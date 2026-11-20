@@ -4,6 +4,23 @@
 #include <QDirIterator>
 #include <QFileInfo>
 
+namespace stud::ui {
+
+qint64 disk_size(const QString& path) {
+    const QFileInfo info(path);
+    if (info.isSymLink() || !info.isDir()) return info.isSymLink() ? 0 : info.size();
+    qint64 total = 0;
+    QDirIterator it(path, QDir::Files | QDir::Hidden | QDir::System | QDir::NoSymLinks,
+                    QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        total += it.fileInfo().size();
+    }
+    return total;
+}
+
+}  // namespace stud::ui
+
 namespace stud::ui::stud1 {
 
 namespace {
@@ -25,21 +42,6 @@ constexpr const char* kCache[] = {
     "desktop-materials",  // Windows materials
 };
 
-// What `path` takes on disk, links not followed: 1.x linked parts of its
-// files directory out to the cache.
-qint64 size_of(const QString& path) {
-    const QFileInfo info(path);
-    if (info.isSymLink() || !info.isDir()) return info.isSymLink() ? 0 : info.size();
-    qint64 total = 0;
-    QDirIterator it(path, QDir::Files | QDir::Hidden | QDir::System | QDir::NoSymLinks,
-                    QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        it.next();
-        total += it.fileInfo().size();
-    }
-    return total;
-}
-
 bool remove(const QString& path) {
     const QFileInfo info(path);
     // A link is removed as a link, never by deleting what it points at.
@@ -56,7 +58,8 @@ Removed remove_remnants(const QString& data_dir, const QString& cache_dir) {
             const QString path = root + QLatin1Char('/') + QLatin1String(name);
             const QFileInfo info(path);
             if (!info.exists() && !info.isSymLink()) continue;
-            const qint64 bytes = size_of(path);
+            // Links aren't followed: 1.x linked parts of its files directory out to the cache.
+            const qint64 bytes = disk_size(path);
             if (remove(path)) {
                 removed.paths << path;
                 removed.bytes += bytes;

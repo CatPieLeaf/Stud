@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
           "the game renders at full size, with RAVU-Zoom ready");
     check(defaults.renderer == "vulkan", "the renderer defaults to Vulkan");
     check(defaults.title_bar == "macos-no-menu", "the title bar defaults to the macOS one, without the menu bar");
-    check(defaults.display_backend == "auto", "the display backend defaults to automatic");
+    check(defaults.display_backend == "wayland", "the display backend defaults to Wayland");
     check(defaults.system_tray, "the tray defaults to on");
     check(defaults.background_fps == 30, "the background frame rate defaults to 30");
     check(defaults.discord_rich_presence, "Discord presence defaults to on");
@@ -155,6 +155,11 @@ int main(int argc, char** argv) {
           "an unknown title bar value throws");
     check(throws_on(dir + "/bad_backend.json", R"({"displayBackend": "mir"})"),
           "an unknown display backend throws");
+    {
+        std::ofstream(dir + "/auto_backend.json") << R"({"displayBackend": "auto"})";
+        check(stud::config::load_settings(dir + "/auto_backend.json").display_backend == "wayland",
+              "an older build's automatic display backend reads as Wayland");
+    }
     check(throws_on(dir + "/bad_vsync.json", R"({"vsync": "yes"})"), "a non-boolean vsync throws");
     check(throws_on(dir + "/bad_presentation.json", R"({"presentation": "triple"})"),
           "an unknown presentation throws");

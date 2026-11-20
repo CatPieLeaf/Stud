@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QElapsedTimer>
+#include <QTimer>
 #include <QWidget>
 
 #include <functional>
@@ -16,8 +17,11 @@ public:
 protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
 
 private:
+    QTimer frames_;
     QElapsedTimer clock_;
     int clicks_ = 0;
 };

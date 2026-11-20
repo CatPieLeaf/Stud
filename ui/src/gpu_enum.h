@@ -25,6 +25,14 @@ std::vector<GpuInfo> enumerate_gpus();
 // Whether any Vulkan driver is installed; without one Roblox runs on OpenGL.
 bool vulkan_available();
 
+// A /dev/dri render node and whether this user can open it.
+struct RenderNode {
+    std::string path;
+    int error = 0;      // errno from opening it; 0 when it opened
+    std::string group;  // its owner group, when the open was refused
+};
+std::vector<RenderNode> render_nodes();
+
 inline constexpr uint32_t kVendorNvidia = 0x10de;
 // Shown on the About cube's tenth click and the welcome page, on NVIDIA.
 inline constexpr const char* kNvidiaNote =
