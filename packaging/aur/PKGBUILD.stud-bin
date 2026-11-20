@@ -54,7 +54,7 @@ sha256sums=('7dca27f70d20052df52c5a57a15848b53744bac8828ccf2b44ce4b8ed2f1af98'
 build() {
   # Only the launcher; Rosemary comes from the archive.
   cmake -S "Stud-$pkgver" -B build -G Ninja \
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr \
     -DSTUD_BUILD_ROSEMARY=OFF \
     -DSTUD_BUILD_TESTS=OFF \

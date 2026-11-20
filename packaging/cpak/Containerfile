@@ -19,7 +19,7 @@ RUN dnf install -y --setopt=install_weak_deps=False \
     && dnf clean all
 
 COPY . /src
-RUN cmake -S /src -B /build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+RUN cmake -S /src -B /build -G Ninja -DCMAKE_BUILD_TYPE=Release \
     && cmake --build /build -j"$(nproc)" \
     && DESTDIR=/stage cmake --install /build --prefix /usr
 

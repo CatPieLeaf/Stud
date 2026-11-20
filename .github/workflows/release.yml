@@ -101,8 +101,9 @@ jobs:
         run: |
           # /usr: the install tree every non-CPack package uses comes from
           # `cmake --install`, and /usr/local broke namcap and the Flatpak.
+          # Release: no debug info (27 MB of the launcher), symbols kept for crash traces.
           cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DSTUD_VERSION="${VERSION}"
           cmake --build build -j"$(nproc)"
@@ -305,7 +306,7 @@ jobs:
           # git for fetching miniz.
           pacman -Syu --noconfirm --needed base-devel cmake ninja git \
               qt6-base qt6-webengine qt6-webchannel openssl libsecret
-          cmake -S /work -B /tmp/qtonly -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+          cmake -S /work -B /tmp/qtonly -G Ninja -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX=/usr -DSTUD_BUILD_ROSEMARY=OFF -DSTUD_BUILD_TESTS=OFF \
               -DSTUD_VERSION="$STUD_VERSION"
           cmake --build /tmp/qtonly -j"$(nproc)"
@@ -396,7 +397,7 @@ jobs:
       - name: Install build dependencies
         run: |
           pacman -Syu --noconfirm --needed \
-            base-devel cmake ninja git python curl zstd \
+            base-devel cmake ninja git python curl zstd nasm vulkan-headers \
             rust shaderc sdl3 ffmpeg \
             qt6-base qt6-webengine qt6-webchannel qt6-wayland breeze openssl libsecret \
             vulkan-icd-loader libglvnd mesa libx11 libxext libxi libxrandr \
@@ -477,7 +478,7 @@ jobs:
         # /usr, as in the packages job.
         run: |
           cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DSTUD_BUILD_TESTS=OFF \
             -DSTUD_VERSION="${VERSION}"

@@ -57,6 +57,24 @@ cmake --install "$build_dir" >/dev/null
 python3 "$repo_root/tools/validate-payload.py" / --label "installed tree" \
     --rosemary-source "$build_dir/rosemary-prefix/src/rosemary" >&2 || die "the install is incomplete"
 
+# Arch's FFmpeg links encoders and image libraries (x265, aom, SVT-AV1, librsvg
+# and its loaders) nothing here uses. The same version with every decoder and
+# demuxer but no encoders or muxers replaces it, so Rosemary and Qt WebEngine find
+# what they use under the same names; FFmpeg links only codec libraries asked for.
+ffmpeg_version="$(pacman -Q ffmpeg | awk '{print $2}' | sed 's/^[0-9]*://; s/-[^-]*$//')"
+say "rebuilding FFmpeg $ffmpeg_version without encoders"
+mkdir -p "$work"
+rm -rf "$work/ffmpeg-$ffmpeg_version"
+curl -fsSL "https://ffmpeg.org/releases/ffmpeg-$ffmpeg_version.tar.xz" | tar -xJ -C "$work" ||
+    die "ffmpeg.org has no FFmpeg $ffmpeg_version source"
+(
+    cd "$work/ffmpeg-$ffmpeg_version"
+    ./configure --prefix=/usr --enable-shared --disable-static --disable-programs --disable-doc \
+        --disable-encoders --disable-muxers --disable-avdevice --enable-libdav1d
+    make -j"$(nproc)"
+    make install
+) >&2 || die "FFmpeg $ffmpeg_version did not build"
+
 tools="$work/tools"
 mkdir -p "$tools"
 fetch_tool() {
@@ -151,6 +169,45 @@ export QTWEBENGINEPROCESS_PATH="\$APPDIR/${webengine_process#"$appdir"/}"
 export QTWEBENGINE_RESOURCES_PATH="\$APPDIR/${webengine_resources#"$appdir"/}"
 export QTWEBENGINE_LOCALES_PATH="\$APPDIR/${webengine_locales#"$appdir"/}"
 HOOK
+
+# Libraries an ELF in the bundle links that the bundle doesn't have.
+unmet() {
+    python3 - "$appdir" <<'PY'
+import os, subprocess, sys
+files, elves = set(), []
+for top, _, names in os.walk(sys.argv[1]):
+    for name in names:
+        path = os.path.join(top, name)
+        files.add(name)
+        try:
+            with open(path, 'rb') as f:
+                if f.read(4) == b'\x7fELF':
+                    elves.append(path)
+        except OSError:
+            pass
+for path in elves:
+    out = subprocess.run(['readelf', '-d', path], capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        if '(NEEDED)' in line:
+            lib = line.split('[')[1].split(']')[0]
+            if lib not in files:
+                print(f'{os.path.relpath(path, sys.argv[1])} needs {lib}')
+PY
+}
+
+# Unused here: Qt's translations (only of Qt's own dialogs; Stud is in English),
+# WebEngine's other languages (pages are unaffected) and developer tools, and the QML
+# modules (with Quick Controls, Kirigami and Qt Labs) and PDF support the widget web
+# views never load.
+before="$(unmet | sort)"
+find "$appdir" -name '*.qm' -delete
+find "$appdir" -path '*/qtwebengine_locales/*.pak' ! -name 'en-US.pak' -delete
+find "$appdir" -name qtwebengine_devtools_resources.pak -delete
+find "$appdir" -type d -path '*/qt6/qml' -prune -exec rm -rf {} +
+find "$appdir" \( -name 'libQt6QuickControls2*' -o -name 'libQt6QuickDialogs2*' -o -name 'libQt6QuickTemplates2*' \
+    -o -name 'libQt6Labs*' -o -name 'libKirigami*' -o -name 'libQt6Pdf*' -o -name 'libqpdf.so' \) -delete
+broken="$(comm -13 <(printf '%s\n' "$before") <(unmet | sort))"
+[ -z "$broken" ] || die "trimming the bundle left these unmet: $broken"
 
 for plugin in \
     platforms/libqwayland.so \

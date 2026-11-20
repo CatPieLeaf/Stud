@@ -11,7 +11,7 @@
 FROM docker.io/library/archlinux:latest
 
 RUN pacman -Syu --noconfirm --needed \
-        base-devel cmake ninja git python curl zstd \
+        base-devel cmake ninja git python curl zstd nasm vulkan-headers \
         rust shaderc sdl3 ffmpeg \
         qt6-base qt6-webengine qt6-webchannel qt6-wayland breeze \
         vulkan-icd-loader libglvnd mesa libx11 libxext libxi libxrandr \

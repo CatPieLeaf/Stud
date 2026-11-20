@@ -5,7 +5,6 @@ runtime: org.kde.Platform
 runtime-version: '6.11'
 sdk: org.kde.Sdk
 command: stud
-separate-locales: false
 
 finish-args:
   - --device=dri
@@ -22,6 +21,8 @@ finish-args:
 
 cleanup-commands:
   - /app/cleanup-BaseApp.sh
+  - find /app/translations/qtwebengine_locales -name '*.pak' ! -name 'en-US.pak' -delete
+  - rm -f /app/resources/qtwebengine_devtools_resources.pak
 
 add-extensions:
   org.freedesktop.Platform.ffmpeg-full:
