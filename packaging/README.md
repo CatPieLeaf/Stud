@@ -51,9 +51,11 @@ dependencies itself; nothing finds it by scanning the binaries. The same
 goes for the Vulkan loader, which the launcher opens to list the GPUs.
 
 The deb and the rpm depend on Qt 6.10 or newer, and on WPE WebKit, which
-Rosemary opens by name to show Roblox's sign-in and web pages. The rpm
-requires it, from Terra (Fedora does not package it); the deb only recommends
-it, since Ubuntu has none and would refuse the package. The AppImage and the
+Rosemary opens by name to show Roblox's sign-in and web pages. Both only
+recommend it: the rpm's comes from Terra, which plain Fedora lacks, and
+Ubuntu has none, so requiring it would refuse the package there. dnf installs
+it wherever Terra is enabled, and an rpm install without it shows the command
+that adds Terra on Stud's welcome page. The AppImage and the
 Flatpak bundle all of it, down to glibc in the AppImage. That is the ordinary
 split: a system package should use the system's libraries.
 

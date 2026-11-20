@@ -18,6 +18,7 @@
 #include "stud1_cleanup.h"
 #include "notifications.h"
 #include "flatpak_permissions.h"
+#include "command_warning.h"
 #include "stud/settings.h"
 #include "stud/stud_paths.h"
 
@@ -108,33 +109,11 @@ QFrame* permission_box(QWidget* parent, QCheckBox* toggle, const QString& what,
     if (!info.open(QIODevice::ReadOnly)) return nullptr;
     const QStringList missing = missing_of(QString::fromUtf8(info.readAll()));
     if (missing.isEmpty()) return nullptr;
-    const QString command = flatpak_override_command(missing);
-
-    auto* box = new QFrame(parent);
-    box->setObjectName(QStringLiteral("permissionBox"));
-    box->setStyleSheet(QStringLiteral("#permissionBox { background: rgba(255, 193, 7, 0.15);"
-                                      " border: 1px solid #ffc107; border-radius: 6px; }"));
-    auto* row = new QHBoxLayout(box);
-    auto* icon = new QLabel(box);
-    icon->setPixmap(box->style()->standardIcon(QStyle::SP_MessageBoxWarning).pixmap(32, 32));
-    row->addWidget(icon, 0, Qt::AlignTop);
-    auto* column = new QVBoxLayout();
-    auto* text = new QLabel(QStringLiteral("%1 need a permission the Flatpak doesn't have. Run this in a "
-                                           "terminal, then restart Stud:").arg(what),
-                            box);
-    text->setWordWrap(true);
-    column->addWidget(text);
-    auto* line = new QLabel(command, box);
-    line->setWordWrap(true);
-    line->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    line->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-    column->addWidget(line);
-    auto* copy = new QPushButton(QStringLiteral("Copy command"), box);
-    QObject::connect(copy, &QPushButton::clicked, box,
-                     [command] { QGuiApplication::clipboard()->setText(command); });
-    column->addWidget(copy, 0, Qt::AlignRight);
-    row->addLayout(column, 1);
-
+    QFrame* box = command_warning(
+        parent,
+        QStringLiteral("%1 need a permission the Flatpak doesn't have. Run this in a terminal, then restart Stud:")
+            .arg(what),
+        flatpak_override_command(missing));
     box->setVisible(toggle->isChecked());
     QObject::connect(toggle, &QCheckBox::toggled, box, &QWidget::setVisible);
     return box;

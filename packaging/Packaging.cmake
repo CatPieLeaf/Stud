@@ -35,11 +35,15 @@ set(CPACK_RPM_PACKAGE_LICENSE "AGPL-3.0-or-later")
 set(CPACK_RPM_PACKAGE_GROUP "Amusements/Games")
 set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
 # Autoreqprov is off, so every library is listed: by SONAME where linked, by
-# package where opened at runtime (SDL3, the Vulkan loader, FFmpeg, WPE WebKit).
+# package where opened at runtime (SDL3, the Vulkan loader, FFmpeg).
 # Fedora's and RPM Fusion's FFmpeg both provide libavcodec-free and
-# libavutil-free; WPE WebKit comes from Terra.
+# libavutil-free.
 set(CPACK_RPM_PACKAGE_REQUIRES
-    "qt6-qtbase-gui, wpewebkit, vulkan-loader, SDL3 >= 3.4.0, libcurl.so.4()(64bit), libcrypto.so.3()(64bit), libsecret-1.so.0()(64bit), libz.so.1()(64bit), libxkbcommon.so.0()(64bit), libudev.so.1()(64bit), libavcodec-free, libavutil-free, gamemode")
+    "qt6-qtbase-gui, vulkan-loader, SDL3 >= 3.4.0, libcurl.so.4()(64bit), libcrypto.so.3()(64bit), libsecret-1.so.0()(64bit), libz.so.1()(64bit), libxkbcommon.so.0()(64bit), libudev.so.1()(64bit), libavcodec-free, libavutil-free, gamemode")
+# WPE WebKit comes from Terra, which plain Fedora lacks: wanted, so dnf installs
+# it wherever Terra is enabled, without failing the install where it is not.
+# Stud's welcome page then shows the command that adds it.
+set(CPACK_RPM_PACKAGE_RECOMMENDS "wpewebkit")
 set(CPACK_RPM_PACKAGE_SUGGESTS "mangohud")
 set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
 set(CPACK_RPM_PACKAGE_AUTOREQPROV " no")

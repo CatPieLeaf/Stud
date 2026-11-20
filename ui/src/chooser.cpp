@@ -1,6 +1,7 @@
 #include "project_links.h"
 #include "mono_icon.h"
 #include "chooser.h"
+#include "command_warning.h"
 
 #include "cube.h"
 #include "cube_view.h"
@@ -12,7 +13,10 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QElapsedTimer>
+#include <QCoreApplication>
 #include <QEventLoop>
+#include <QFrame>
+#include <QProcess>
 #include <QRandomGenerator>
 #include <QFile>
 #include <QHBoxLayout>
@@ -247,6 +251,19 @@ void show_release_notes(QWidget* parent) {
     });
 }
 
+// Stud installed from an rpm that went without WPE WebKit: the rpm only
+// recommends it, since it comes from Terra, which plain Fedora lacks.
+bool rpm_without_wpe() {
+    const auto succeeds = [](const QStringList& arguments) {
+        QProcess rpm;
+        rpm.start(QStringLiteral("rpm"), arguments);
+        return rpm.waitForFinished() && rpm.exitStatus() == QProcess::NormalExit && rpm.exitCode() == 0;
+    };
+    return succeeds({QStringLiteral("-qf"), QCoreApplication::applicationFilePath()}) &&
+           !succeeds({QStringLiteral("-q"), QStringLiteral("--whatprovides"),
+                      QStringLiteral("libWPEWebKit-2.0.so.1()(64bit)")});
+}
+
 }  // namespace
 
 std::optional<client::Product> choose_product() {
@@ -336,6 +353,18 @@ std::optional<client::Product> choose_product() {
         // Fixed to the header's width so long lines wrap.
         quote->setFixedWidth(top->sizeHint().width());
         layout->addWidget(quote, 0, Qt::AlignHCenter);
+    }
+    if (rpm_without_wpe()) {
+        QFrame* warning = command_warning(
+            &dialog,
+            QStringLiteral("Roblox's sign-in and web pages need WPE WebKit, which Fedora doesn't package. "
+                           "Add the Terra repository and install it, then restart Stud:"),
+            QStringLiteral("sudo dnf install --nogpgcheck --repofrompath "
+                           "'terra,https://repos.fyralabs.com/terra$releasever' terra-release && "
+                           "sudo dnf install wpewebkit"));
+        // As wide as the header, so only the page's height grows.
+        warning->setFixedWidth(top->sizeHint().width());
+        layout->addWidget(warning, 0, Qt::AlignHCenter);
     }
     layout->addSpacing(dialog.fontMetrics().height());
 
