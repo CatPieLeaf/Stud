@@ -225,10 +225,16 @@ Then install Stud:
 sudo dnf install stud
 ```
 
-Or install the rpm from a release by hand. It installs without Terra, but Roblox's sign-in needs WPE WebKit, which only Terra has (Fedora itself does not package it): with Terra added as above it comes along, and without it Stud's welcome page shows the command that adds it.
+Or install the rpm from a release by hand. It installs without Terra, but Roblox's sign-in needs WPE WebKit, which only Terra has.
 
 ```bash
 sudo dnf install ./stud-*.x86_64.rpm
+```
+
+For that, you'll need to use the command above to add Terra's repository. Then install WPE WebKit:
+
+```bash
+sudo dnf install wpewebkit
 ```
 
 ## 🟣 D E B  ( D E B I A N  /  U B U N T U )
