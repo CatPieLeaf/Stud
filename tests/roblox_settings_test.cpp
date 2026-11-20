@@ -1,19 +1,11 @@
 // Roblox's settings file: one element read and changed, the rest untouched.
 
 #include "roblox_settings.h"
+#include "check.h"
 
 #include <cstdio>
 
 namespace rs = stud::ui::roblox_settings;
-
-static int failures = 0;
-
-static void expect(bool ok, const char* what) {
-    if (!ok) {
-        std::fprintf(stderr, "FAIL: %s\n", what);
-        ++failures;
-    }
-}
 
 int main() {
     const QString xml = QStringLiteral(
@@ -36,6 +28,5 @@ int main() {
     expect(rs::write(xml, QStringLiteral("Missing"), QStringLiteral("1")) == xml,
            "an absent element is not added");
 
-    if (failures == 0) std::printf("roblox_settings_test: ok\n");
-    return failures == 0 ? 0 : 1;
+    return finish("roblox_settings_test");
 }

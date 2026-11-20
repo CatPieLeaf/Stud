@@ -1,9 +1,10 @@
 // Roblox's code signature: the installed client passes as Roblox signed it,
 // and a changed resource, an added file, a changed code page or the wrong
-// identifier each fail. Needs a client on disk (Stud's own, or the .app named
+// identifier each fail. Needs an uncustomized client on disk (Stud's own, or the .app named
 // by STUD_TEST_CLIENT), so it reports skipped where there is none, as in CI.
 
 #include <QCoreApplication>
+#include "check.h"
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -12,22 +13,20 @@
 #include <cstdio>
 
 #include "code_signature.h"
+#include "stud/stud_paths.h"
 
 namespace {
 
-int failures = 0;
-
-void expect(bool ok, const char* what, const QString& detail = {}) {
-    if (!ok) {
-        std::fprintf(stderr, "FAILED: %s %s\n", what, qPrintable(detail));
-        ++failures;
-    }
+void expect(bool ok, const char* what, const QString& detail) {
+    ::expect(ok, std::string(what) + " " + detail.toStdString());
 }
 
 QString installed_client() {
     if (const QString forced = qEnvironmentVariable("STUD_TEST_CLIENT"); !forced.isEmpty()) return forced;
-    const QDir clients(QDir::homePath() + QStringLiteral("/.local/share/stud/client"));
+    const QDir clients(QString::fromStdString(stud::paths::data_dir()) + QStringLiteral("/client"));
     for (const QString& version : clients.entryList({QStringLiteral("version-*")}, QDir::Dirs)) {
+        // Customizations replace files Roblox sealed; the launch checks the seal before applying them.
+        if (QFileInfo::exists(clients.filePath(version) + QStringLiteral("/.stud-customizations"))) continue;
         const QString app = clients.filePath(version) + QStringLiteral("/RobloxPlayer.app");
         if (QFileInfo(app + QStringLiteral("/Contents/_CodeSignature/CodeResources")).exists()) return app;
     }
@@ -57,7 +56,7 @@ int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     const QString client = installed_client();
     if (client.isEmpty()) {
-        std::printf("skipped: no Roblox client on disk\n");
+        std::printf("skipped: no Roblox client without customizations on disk\n");
         return 77;
     }
     const QString identifier = qEnvironmentVariable("STUD_TEST_IDENTIFIER", QStringLiteral("com.roblox.RobloxPlayer"));
@@ -110,6 +109,5 @@ int main(int argc, char** argv) {
     restore(helper, helper_bytes);
 
     expect(stud::ui::codesign::verify_app(copy, identifier).isEmpty(), "the restored copy passes again");
-    if (failures == 0) std::printf("code_signature_test: all checks passed\n");
-    return failures == 0 ? 0 : 1;
+    return finish("code_signature_test");
 }

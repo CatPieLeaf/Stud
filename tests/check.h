@@ -24,6 +24,21 @@ inline void check_eq(const std::string& got, const std::string& want, const std:
     check(got == want, what + " (got \"" + got + "\", wanted \"" + want + "\")");
 }
 
+// For a test that reports every failure rather than only the first: expect()
+// as it goes, then return finish() from main.
+inline int g_failures = 0;
+
+inline void expect(bool condition, const std::string& what) {
+    if (condition) return;
+    std::fprintf(stderr, "FAILED: %s\n", what.c_str());
+    ++g_failures;
+}
+
+inline int finish(const std::string& test) {
+    if (g_failures == 0) std::printf("%s: ok\n", test.c_str());
+    return g_failures == 0 ? 0 : 1;
+}
+
 // A scratch folder with nothing in it. These live in the build tree, and a
 // file left by an earlier run would pass for this run's output.
 inline void fresh_dir(const std::filesystem::path& dir) {

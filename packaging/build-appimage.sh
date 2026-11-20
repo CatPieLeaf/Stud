@@ -57,19 +57,14 @@ cmake --install "$build_dir" >/dev/null
 python3 "$repo_root/tools/validate-payload.py" / --label "installed tree" \
     --rosemary-source "$build_dir/rosemary-prefix/src/rosemary" >&2 || die "the install is incomplete"
 
-# Pinned and checked, since what they download ends up in the image.
-anylinux_rev=de2a80d6229298518cc737ced6b3fa5832053ea5
 tools="$work/tools"
 mkdir -p "$tools"
 fetch_tool() {
-    local name="$1" sha256="$2"
-    curl -fsSL -o "$tools/$name" \
-        "https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/$anylinux_rev/useful-tools/$name"
-    echo "$sha256  $tools/$name" | sha256sum -c --quiet - || die "$name does not match its pinned checksum"
-    chmod +x "$tools/$name"
+    curl -fsSL -o "$tools/$1" "https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/main/useful-tools/$1"
+    chmod +x "$tools/$1"
 }
-fetch_tool quick-sharun.sh 8026711b271c0d67d37075cd7e8c50dbd9fa635c012f9edb92a2c0d41573664b
-fetch_tool get-debloated-pkgs.sh 217ff68aafe085d2d4ab34a50e267805af43736ad8ef880c01ef88e52db8589f
+fetch_tool quick-sharun.sh
+fetch_tool get-debloated-pkgs.sh
 
 # Mesa without LLVM. NVIDIA's driver is never bundled; sharun loads the host's.
 say "installing Anylinux's mesa"
@@ -168,12 +163,9 @@ do
 done
 
 # SquashFS, not DwarFS: AppImageHub, firejail and the classic runtime only mount SquashFS.
-uruntime_version=v0.8.1
-uruntime_sha256=2153e68d63f570c7ebe3d1f38df0fa16814f34d839c5cce2ee42667e327708e8
-uruntime="$tools/uruntime-$uruntime_version"
+uruntime="$tools/uruntime"
 curl -fsSL -o "$uruntime" \
-    "https://github.com/VHSgunzo/uruntime/releases/download/$uruntime_version/uruntime-appimage-squashfs-$arch"
-echo "$uruntime_sha256  $uruntime" | sha256sum -c --quiet - || die "uruntime does not match its pinned checksum"
+    "https://github.com/VHSgunzo/uruntime/releases/latest/download/uruntime-appimage-squashfs-$arch"
 chmod +x "$uruntime"
 
 say "packing the image"

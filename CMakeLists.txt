@@ -10,7 +10,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(STUD_BUILD_TESTS "Build Stud tests" ON)
-option(STUD_BUILD_UI "Build the Qt6 launcher/auth UI" ON)
+option(STUD_BUILD_UI "Build the Qt6 launcher" ON)
 # Off when Rosemary comes from elsewhere (STUD_ROSEMARY, or rosemary on PATH).
 option(STUD_BUILD_ROSEMARY "Build Rosemary from github.com/CatPieLeaf/rosemary-stud" ON)
 # Upstream (microlift/rosemary) with Stud's changes, rebased onto its newest.
@@ -46,7 +46,6 @@ endif()
 # Before any add_subdirectory(), which would otherwise see these empty.
 include(GNUInstallDirs)
 set(STUD_LIBEXEC_DIR "${CMAKE_INSTALL_LIBEXECDIR}/stud")
-set(STUD_PRIVATE_LIB_DIR "lib/stud")
 
 if(STUD_SANITIZE)
     add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
@@ -125,7 +124,6 @@ if(STUD_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
-
 
 # ---------------------------------------------------------------------
 # Installing. The deb and rpm (CPack) and the AppImage all package this install

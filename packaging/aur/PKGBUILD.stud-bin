@@ -43,7 +43,6 @@ makedepends=(
   'cmake'
   'ninja'
   'git'
-  'vulkan-headers'
 )
 # The source tarball is only for building the launcher.
 source=("$pkgname-$pkgver.tar.zst::$url/releases/download/$pkgver/stud-$pkgver-$CARCH.tar.zst"

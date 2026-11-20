@@ -36,7 +36,6 @@ makedepends=(
   'git'
   'rust'
   'shaderc'
-  'vulkan-headers'
 )
 optdepends=(
   'mangohud: the performance overlay Stud can switch on in Settings'

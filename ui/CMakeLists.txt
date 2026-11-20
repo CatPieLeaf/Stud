@@ -93,10 +93,9 @@ add_executable(stud-ui
 )
 target_link_libraries(stud-ui PRIVATE Qt6::Widgets Qt6::Network Qt6::DBus
                                        Qt6::WebEngineWidgets Qt6::WebChannel
-                                       stud_ui_gpu_enum stud_config stud_ui_notifications stud_ui_mono_icon
+                                       stud_ui_gpu_enum stud_ui_notifications stud_ui_mono_icon
                                        stud_ui_launch_uri stud_ui_log_archive stud_ui_mac_client
-                                       stud_ui_stud1_cleanup miniz PkgConfig::LIBSECRET)
-
+                                       stud_ui_stud1_cleanup PkgConfig::LIBSECRET)
 
 set_target_properties(stud-ui PROPERTIES
     AUTOMOC ON

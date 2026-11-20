@@ -19,22 +19,15 @@ apps="$HOME/.local/share/applications"
 icons="$HOME/.local/share/icons/hicolor"
 mkdir -p "$apps"
 
-install_icon() {
-    local source=$1 name=$2
-    for size in 16 24 32 48 64 128 256 512; do
-        dir="$icons/${size}x${size}/apps"
-        mkdir -p "$dir"
-        if command -v magick >/dev/null 2>&1; then
-            magick "$source" -resize "${size}x${size}" "$dir/$name.png"
-        else
-            cp "$source" "$dir/$name.png"
-        fi
-    done
-    cp "$source" "$icons/512x512/apps/$name.png"
-}
-install_icon "$here/stud.png" "$app_id"
-install_icon "$here/../ui/resources/studred.png" "$app_id-player"
-install_icon "$here/../ui/resources/studblu.png" "$app_id-studio"
+# The pre-rendered sizes the packages install.
+for size in 16 24 32 48 64 128 256; do
+    mkdir -p "$icons/${size}x${size}/apps"
+    cp "$here/icons/$size.png" "$icons/${size}x${size}/apps/$app_id.png"
+done
+mkdir -p "$icons/512x512/apps"
+cp "$here/stud.png" "$icons/512x512/apps/$app_id.png"
+cp "$here/../ui/resources/studred.png" "$icons/512x512/apps/$app_id-player.png"
+cp "$here/../ui/resources/studblu.png" "$icons/512x512/apps/$app_id-studio.png"
 
 # KDE's loader ignores a user theme directory without its own index.theme.
 if [[ ! -f "$icons/index.theme" ]]; then
@@ -62,7 +55,7 @@ for entry in "$app_id" "$app_id.Player" "$app_id.Studio"; do
         -e "s|^Icon=$app_id-player$|Icon=$icons/512x512/apps/$app_id-player.png|" \
         -e "s|^Icon=$app_id-studio$|Icon=$icons/512x512/apps/$app_id-studio.png|" \
         -e "s|^Icon=$app_id$|Icon=$icon_path|" \
-        "$here/$entry.desktop" | grep -v '^#' > "$apps/$entry.desktop"
+        "$here/$entry.desktop" > "$apps/$entry.desktop"
     chmod 644 "$apps/$entry.desktop"
 done
 mime="$HOME/.local/share/mime"

@@ -86,7 +86,6 @@ jobs:
           dnf install -y --setopt=install_weak_deps=False --setopt=max_parallel_downloads=10 \
             gcc-c++ cmake ninja-build git pkgconf-pkg-config rpm-build gzip \
             qt6-qtbase-devel qt6-qtwebengine-devel qt6-qtwebchannel-devel \
-            vulkan-headers vulkan-loader-devel \
             rust cargo glslc libcurl-devel openssl-devel libsecret-devel zlib-devel systemd-devel libxkbcommon-devel \
             curl tar xz zstd python3 findutils cpio
 
@@ -305,7 +304,7 @@ jobs:
           set -eux
           # git for fetching miniz.
           pacman -Syu --noconfirm --needed base-devel cmake ninja git \
-              qt6-base qt6-webengine qt6-webchannel vulkan-headers vulkan-icd-loader openssl libsecret
+              qt6-base qt6-webengine qt6-webchannel openssl libsecret
           cmake -S /work -B /tmp/qtonly -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
               -DCMAKE_INSTALL_PREFIX=/usr -DSTUD_BUILD_ROSEMARY=OFF -DSTUD_BUILD_TESTS=OFF \
               -DSTUD_VERSION="$STUD_VERSION"
@@ -400,7 +399,7 @@ jobs:
             base-devel cmake ninja git python curl zstd \
             rust shaderc sdl3 ffmpeg \
             qt6-base qt6-webengine qt6-webchannel qt6-wayland breeze openssl libsecret \
-            vulkan-headers vulkan-icd-loader libglvnd mesa libx11 libxext libxi libxrandr \
+            vulkan-icd-loader libglvnd mesa libx11 libxext libxi libxrandr \
             libxcursor libxfixes libxss wayland libxkbcommon libxkbcommon-x11 libdecor \
             systemd-libs pipewire libpulse alsa-lib \
             patchelf strace xorg-server-xvfb desktop-file-utils zsync wget
@@ -464,7 +463,7 @@ jobs:
             build-essential cmake ninja-build pkg-config git curl ca-certificates \
             file dpkg-dev tar xz-utils zstd python3 \
             qt6-base-dev qt6-base-dev-tools qt6-webengine-dev qt6-webengine-dev-tools \
-            qt6-webchannel-dev libvulkan-dev libgles-dev \
+            qt6-webchannel-dev libgles-dev \
             glslc libcurl4-openssl-dev libssl-dev libsecret-1-dev zlib1g-dev libudev-dev libxkbcommon-dev
 
       - uses: actions/checkout@v7

@@ -3,6 +3,7 @@
 // button: no colour of the theme's own survives.
 
 #include <QApplication>
+#include "check.h"
 #include <QImage>
 #include <QPalette>
 #include <QPixmap>
@@ -12,8 +13,6 @@
 #include "mono_icon.h"
 
 namespace {
-
-int failures = 0;
 
 void expect_only(const QIcon& icon, QIcon::Mode mode, QColor colour, const char* what) {
     // Premultiplied, so soft edges are checked exactly too.
@@ -31,14 +30,14 @@ void expect_only(const QIcon& icon, QIcon::Mode mode, QColor colour, const char*
                 off(qBlue(pixel), colour.blue())) {
                 std::fprintf(stderr, "%s: pixel %d,%d is #%08x premultiplied, not %s at alpha %d\n",
                              what, x, y, pixel, qPrintable(colour.name()), alpha);
-                ++failures;
+                ++g_failures;
                 return;
             }
         }
     }
     if (visible == 0) {
         std::fprintf(stderr, "%s: the icon draws nothing\n", what);
-        ++failures;
+        ++g_failures;
     }
 }
 
@@ -62,6 +61,5 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
     check_scheme(QColor(0xfc, 0xfc, 0xfc), QColor(0x70, 0x70, 0x70), "dark");
     check_scheme(QColor(0x23, 0x26, 0x29), QColor(0xa0, 0xa0, 0xa0), "light");
-    if (failures == 0) std::printf("mono icons: ok\n");
-    return failures == 0 ? 0 : 1;
+    return finish("mono icons");
 }

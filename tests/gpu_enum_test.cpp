@@ -20,8 +20,7 @@ int main() {
         std::printf("  found GPU %u: %s\n", gpu.device_index, gpu.name.c_str());
     }
 
-    // Raw enumeration indices: rising but with gaps where duplicates (Flatpak's
-    // second ICD directory) were dropped.
+    // DRM card numbers: rising, with gaps where a card number has no GPU.
     for (size_t i = 0; i < gpus.size(); ++i) {
         check(gpus[i].device_index >= static_cast<uint32_t>(i),
               "device_index is the DRM card number");

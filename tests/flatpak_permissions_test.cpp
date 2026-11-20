@@ -2,21 +2,13 @@
 // revocations included, against what Stud needs.
 
 #include "flatpak_permissions.h"
+#include "check.h"
 
 #include <cstdio>
 
 using stud::ui::missing_controller_permissions;
 using stud::ui::missing_discord_permissions;
 using stud::ui::missing_flatpak_permissions;
-
-static int failures = 0;
-
-static void expect(bool ok, const char* what) {
-    if (!ok) {
-        std::fprintf(stderr, "FAIL: %s\n", what);
-        ++failures;
-    }
-}
 
 int main() {
     const QString full = QStringLiteral(
@@ -57,6 +49,5 @@ int main() {
     expect(missing_discord_permissions(QStringLiteral("[Context]\nfilesystems=!xdg-run/discord-ipc-0;\n")).size() == 3,
            "a revoked socket counts as missing");
 
-    if (failures == 0) std::printf("flatpak_permissions_test: ok\n");
-    return failures == 0 ? 0 : 1;
+    return finish("flatpak_permissions_test");
 }

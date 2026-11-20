@@ -134,7 +134,7 @@ The launcher stays for the whole session as the client's parent, so there is alw
 ```bash
 sudo dnf install cmake ninja-build gcc-c++ git cargo glslc \
   qt6-qtbase-devel qt6-qtwebengine-devel qt6-qtwebchannel-devel \
-  vulkan-headers vulkan-loader-devel libcurl-devel openssl-devel libsecret-devel zlib-devel systemd-devel \
+  libcurl-devel openssl-devel libsecret-devel zlib-devel systemd-devel \
   libxkbcommon-devel SDL3
 ```
 
@@ -144,7 +144,7 @@ sudo dnf install cmake ninja-build gcc-c++ git cargo glslc \
 ```bash
 sudo apt install cmake ninja-build build-essential git glslc \
   qt6-base-dev qt6-webengine-dev qt6-webchannel-dev \
-  libvulkan-dev libgles-dev libcurl4-openssl-dev libssl-dev libsecret-1-dev zlib1g-dev libudev-dev libxkbcommon-dev libsdl3-0
+  libgles-dev libcurl4-openssl-dev libssl-dev libsecret-1-dev zlib1g-dev libudev-dev libxkbcommon-dev libsdl3-0
 ```
 
 Ubuntu's cargo is older than Rosemary needs; install Rust with [rustup](https://rustup.rs) instead.

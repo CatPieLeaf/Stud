@@ -3,6 +3,7 @@
 // makes the set the last good one.
 
 #include <QCoreApplication>
+#include "check.h"
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
@@ -16,21 +17,12 @@ namespace {
 using stud::ui::client::Product;
 namespace guard = stud::ui::customization;
 
-int failures = 0;
-
-void expect(bool ok, const char* what) {
-    if (!ok) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        ++failures;
-    }
-}
-
 void write(const QString& path, const QByteArray& bytes) {
     QDir().mkpath(path.left(path.lastIndexOf('/')));
     QFile out(path);
     if (!out.open(QIODevice::WriteOnly)) {
         std::fprintf(stderr, "FAILED: could not write %s\n", qPrintable(path));
-        ++failures;
+        ++g_failures;
         return;
     }
     out.write(bytes);
@@ -85,6 +77,5 @@ int main(int argc, char** argv) {
     expect(guard::end_run(Product::Player, true).isEmpty(), "a later crash leaves d alone");
     expect(read(folder + "/content/fonts/d.ttf") == "new d", "d stays");
 
-    if (failures == 0) std::printf("customization guard: ok\n");
-    return failures == 0 ? 0 : 1;
+    return finish("customization guard");
 }

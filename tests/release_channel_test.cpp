@@ -3,6 +3,7 @@
 // with nothing else there touched.
 
 #include "mac_client.h"
+#include "check.h"
 
 #include <QDir>
 #include <QFile>
@@ -10,15 +11,6 @@
 #include <cstdio>
 
 namespace {
-
-int failures = 0;
-
-void expect(bool ok, const char* what) {
-    if (!ok) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        ++failures;
-    }
-}
 
 void write(const QString& path, const QByteArray& bytes) {
     QDir().mkpath(path.left(path.lastIndexOf('/')));
@@ -61,6 +53,5 @@ int main() {
            "Roblox's settings and storage stay");
     expect(stud::ui::client::remove_installer_leftovers(root.path()).isEmpty(), "a second pass finds nothing");
 
-    if (failures == 0) std::printf("release_channel_test: ok\n");
-    return failures == 0 ? 0 : 1;
+    return finish("release_channel_test");
 }

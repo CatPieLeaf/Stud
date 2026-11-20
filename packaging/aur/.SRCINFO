@@ -10,7 +10,6 @@ pkgbase = stud
 	makedepends = git
 	makedepends = rust
 	makedepends = shaderc
-	makedepends = vulkan-headers
 	depends = gamemode
 	depends = qt6-base
 	depends = qt6-webengine

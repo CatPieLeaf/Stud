@@ -49,7 +49,6 @@
             qt6.qtwayland
             qt6.qtwebengine
             qt6.qtwebchannel
-            vulkan-headers
             openssl
             libsecret
           ];

@@ -2,6 +2,7 @@
 // Stud changes inside the bundle on purpose: FFlags and customizations.
 
 #include <QCoreApplication>
+#include "check.h"
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
@@ -11,21 +12,12 @@
 
 namespace {
 
-int failures = 0;
-
-void expect(bool ok, const char* what) {
-    if (!ok) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        ++failures;
-    }
-}
-
 void write(const QString& path, const QByteArray& bytes) {
     QDir().mkpath(path.left(path.lastIndexOf('/')));
     QFile out(path);
     if (!out.open(QIODevice::WriteOnly)) {
         std::fprintf(stderr, "FAILED: could not write %s\n", qPrintable(path));
-        ++failures;
+        ++g_failures;
         return;
     }
     out.write(bytes);
@@ -69,6 +61,5 @@ int main(int argc, char** argv) {
     write(contents + "/Info.plist", "plist, edited");
     expect(stud::ui::client::code_manifest(bundle) != shipped, "a changed Info.plist is noticed");
 
-    if (failures == 0) std::printf("client integrity: ok\n");
-    return failures == 0 ? 0 : 1;
+    return finish("client integrity");
 }

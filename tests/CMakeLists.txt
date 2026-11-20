@@ -22,7 +22,7 @@ if(STUD_BUILD_UI)
     add_test(NAME mono_icon_test COMMAND stud_mono_icon_test)
     set_tests_properties(mono_icon_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
-    # roblox-player: and roblox: launch-URI parsing.
+    # Which launch arguments are Roblox links.
     add_executable(stud_launch_uri_test launch_uri_test.cpp)
     target_link_libraries(stud_launch_uri_test PRIVATE stud_ui_launch_uri)
     add_test(NAME launch_uri_test COMMAND stud_launch_uri_test)

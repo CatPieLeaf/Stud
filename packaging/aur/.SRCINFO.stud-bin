@@ -8,7 +8,6 @@ pkgbase = stud-bin
 	makedepends = cmake
 	makedepends = ninja
 	makedepends = git
-	makedepends = vulkan-headers
 	depends = gamemode
 	depends = qt6-base
 	depends = qt6-webengine
