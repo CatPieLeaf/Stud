@@ -51,7 +51,7 @@ struct StudSettings {
     std::string upscaler = "ravu-ar";
 
     // "macos" (with menu bar), "macos-no-menu", or "native" (the desktop's).
-    std::string title_bar = "macos-no-menu";
+    std::string title_bar = "native";
 
     // "wayland" or "x11" (XWayland). Only read where both are available.
     std::string display_backend = "wayland";
