@@ -31,6 +31,7 @@
 <p align="center">
   <a href="https://github.com/CatPieLeaf/Stud/releases"><img src=".github/get-it-on-github.png" alt="Get it on GitHub" height="70"></a>
   <a href="https://cpak.it/store/apps/stud"><img src=".github/get-it-on-cpak.png" alt="Get it on cpak" height="70"></a>
+  <a href="https://flathub.org/en/apps/io.github.catpieleaf.Stud"><img src=".github/get-it-on-flathub.png" alt="Get it on Flathub" height="70"></a>
 </p>
 
 <br>

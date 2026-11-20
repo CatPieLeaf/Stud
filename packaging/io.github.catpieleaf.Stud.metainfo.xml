@@ -65,6 +65,11 @@
     <name>CatPieLeaf</name>
   </developer>
 
+  <branding>
+    <color type="primary" scheme_preference="light">#9c40bf</color>
+    <color type="primary" scheme_preference="dark">#3d1c4a</color>
+  </branding>
+
   <supports>
     <control>keyboard</control>
     <control>pointing</control>
