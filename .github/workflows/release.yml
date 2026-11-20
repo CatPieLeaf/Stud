@@ -583,7 +583,8 @@ jobs:
         run: |
           flatpak remote-add --if-not-exists --system flathub \
             https://dl.flathub.org/repo/flathub.flatpakrepo
-          echo "WPE_KEY=$(tools/flatpak-wpe-cache-key.sh)" >> "$GITHUB_ENV"
+          key=$(tools/flatpak-wpe-cache-key.sh)
+          echo "WPE_KEY=$key" >> "$GITHUB_ENV"
 
       - name: Restore the WPE build
         # Saved from main by the Dependency cache workflow; on a miss WPE is built here.

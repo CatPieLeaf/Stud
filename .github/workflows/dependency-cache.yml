@@ -79,7 +79,8 @@ jobs:
         run: |
           flatpak remote-add --if-not-exists --system flathub \
             https://dl.flathub.org/repo/flathub.flatpakrepo
-          echo "key=$(tools/flatpak-wpe-cache-key.sh)" >> "$GITHUB_OUTPUT"
+          key=$(tools/flatpak-wpe-cache-key.sh)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
 
       - name: Restore the WPE build
         # A hit also counts as use, which keeps the cache from being evicted.

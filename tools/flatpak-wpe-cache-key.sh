@@ -10,11 +10,12 @@ grep -q '^  - name: rosemary$' "$manifest" || { echo "no rosemary module in $man
 field() { sed -n "s/^$1: '\{0,1\}\([^']*\)'\{0,1\}$/\1/p" "$manifest"; }
 version=$(field runtime-version)
 arch=$(flatpak --default-arch)
+# Each lookup on its own, so a failed one stops the script instead of hashing less.
+runtime=$(flatpak remote-info --system --show-commit flathub "runtime/$(field runtime)/$arch/$version")
+sdk=$(flatpak remote-info --system --show-commit flathub "runtime/$(field sdk)/$arch/$version")
+builder=$(flatpak-builder --version)
 sum=$({
     sed '/^  - name: rosemary$/,$d' "$manifest"
-    for ref in "$(field runtime)" "$(field sdk)"; do
-        flatpak remote-info --system --show-commit flathub "runtime/$ref/$arch/$version"
-    done
-    flatpak-builder --version
+    printf '%s\n' "$runtime" "$sdk" "$builder"
 } | sha256sum | cut -c1-16)
 echo "flatpak-wpe-$sum"
