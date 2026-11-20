@@ -1,6 +1,6 @@
 #include "project_links.h"
 
-#include <QDesktopServices>
+#include "open_location.h"
 #include <QUrl>
 
 #include "mono_icon.h"
@@ -14,7 +14,7 @@ QPushButton* link_button(QWidget* parent, const QString& name, const QString& lo
     auto* button = new QPushButton(labelled ? name : QString(), parent);
     button->setIcon(mono_resource_icon(logo));
     button->setToolTip(name);
-    QObject::connect(button, &QPushButton::clicked, button, [url] { QDesktopServices::openUrl(QUrl(url)); });
+    QObject::connect(button, &QPushButton::clicked, button, [url] { open_location(QUrl(url)); });
     return button;
 }
 

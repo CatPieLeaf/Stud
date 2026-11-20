@@ -79,6 +79,7 @@ add_executable(stud-ui
     src/chooser.cpp
     src/settings_window.cpp
     src/command_warning.cpp
+    src/open_location.cpp
     src/project_links.cpp
     src/cube_view.cpp
     src/cube.cpp

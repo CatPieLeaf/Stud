@@ -26,7 +26,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
-#include <QDesktopServices>
+#include "open_location.h"
 #include <QGuiApplication>
 #include <QUrl>
 #include <QLocalServer>
@@ -347,7 +347,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         open->setIcon(mono_icon("folder-open", QStyle::SP_DirOpenIcon));
         connect(open, &QPushButton::clicked, this, [product] {
             QDir().mkpath(customization::folder(product));
-            QDesktopServices::openUrl(QUrl::fromLocalFile(customization::folder(product)));
+            open_location(QUrl::fromLocalFile(customization::folder(product)));
         });
         folders->addWidget(open);
     }
@@ -531,7 +531,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         if (link == UpdateCheck::releasesUrl()) {
             UpdateCheck::open();
         } else {
-            QDesktopServices::openUrl(QUrl(link));
+            open_location(QUrl(link));
         }
     });
     layout->addWidget(statusLabel_);
@@ -972,7 +972,7 @@ void SettingsWindow::buildStudioTab(QVBoxLayout* tab) {
         }
         const QString dir = home + QLatin1Char('/') + relative;
         QDir().mkpath(dir);
-        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+        open_location(QUrl::fromLocalFile(dir));
     };
     connect(plugins, &QPushButton::clicked, this, [open] { open(QStringLiteral("Documents/Roblox/Plugins")); });
     connect(documents, &QPushButton::clicked, this, [open] { open(QStringLiteral("Documents")); });
@@ -1089,12 +1089,12 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
     connect(openLogs, &QPushButton::clicked, this, [] {
         const QString dir = QString::fromStdString(stud::paths::log_dir());
         QDir().mkpath(dir);
-        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+        open_location(QUrl::fromLocalFile(dir));
     });
     connect(openData, &QPushButton::clicked, this, [] {
         const QString dir = QString::fromStdString(stud::paths::data_dir());
         QDir().mkpath(dir);
-        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+        open_location(QUrl::fromLocalFile(dir));
     });
     connect(copyInfo, &QPushButton::clicked, this, [status] {
         QGuiApplication::clipboard()->setText(QString::fromStdString(diagnostics_text()));

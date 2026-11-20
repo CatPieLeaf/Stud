@@ -3,7 +3,7 @@
 #include "notifications.h"
 
 #include <QCryptographicHash>
-#include <QDesktopServices>
+#include "open_location.h"
 #include <QFile>
 #include <QFileInfo>
 #include <QUrl>
@@ -148,7 +148,7 @@ void UpdateCheck::open() {
         update_appimage(appimage);
         return;
     }
-    QDesktopServices::openUrl(QUrl(releasesUrl()));
+    open_location(QUrl(releasesUrl()));
 }
 
 UpdateCheck* UpdateCheck::instance() {

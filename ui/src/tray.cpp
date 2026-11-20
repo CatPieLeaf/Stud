@@ -30,7 +30,6 @@ namespace stud::ui { void terminate_stud_session(); }
 #include <QStandardPaths>
 #include <QIcon>
 #include <QAction>
-#include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QHBoxLayout>
