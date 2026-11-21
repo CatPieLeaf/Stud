@@ -79,6 +79,7 @@ private:
     QCheckBox* discordJoinCheck_;
     QCheckBox* controllersCheck_;
     QCheckBox* closeOnLeaveCheck_;
+    QCheckBox* jsdelivrCheck_;
     QCheckBox* serverRegionCheck_;
     QCheckBox* historyGamesCheck_;
     QCheckBox* historyServersCheck_;

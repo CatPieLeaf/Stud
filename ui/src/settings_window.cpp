@@ -240,6 +240,11 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     environmentEdit_->setMaximumHeight(environmentEdit_->fontMetrics().lineSpacing() * 5);
     general->addWidget(environmentEdit_);
 
+    jsdelivrCheck_ = new QCheckBox("Use jsDelivr mirror instead of GitHub", this);
+    jsdelivrCheck_->setToolTip("Update checks and customization downloads go through jsDelivr's mirror of "
+                               "GitHub first, for networks where GitHub is slow or blocked.");
+    general->addWidget(jsdelivrCheck_);
+
     general->addStretch();
 
     // ---- Graphics ------------------------------------------------------
@@ -465,6 +470,7 @@ void SettingsWindow::installResets() {
     add(discordJoinCheck_, [this, d] { discordJoinCheck_->setChecked(d.discord_join_button); });
     add(controllersCheck_, [this, d] { controllersCheck_->setChecked(d.game_controllers); });
     add(closeOnLeaveCheck_, [this, d] { closeOnLeaveCheck_->setChecked(d.close_on_leave); });
+    add(jsdelivrCheck_, [this, d] { jsdelivrCheck_->setChecked(d.use_jsdelivr); });
     add(serverRegionCheck_,
         [this, d] { serverRegionCheck_->setChecked(d.server_region_notification); });
     add(historyGamesCheck_, [this, d] { historyGamesCheck_->setChecked(d.record_game_history); });
@@ -1316,6 +1322,7 @@ void SettingsWindow::loadFromDisk() {
     discordJoinCheck_->setEnabled(settings.discord_rich_presence);
     controllersCheck_->setChecked(settings.game_controllers);
     closeOnLeaveCheck_->setChecked(settings.close_on_leave);
+    jsdelivrCheck_->setChecked(settings.use_jsdelivr);
     serverRegionCheck_->setChecked(settings.server_region_notification);
     historyGamesCheck_->setChecked(settings.record_game_history);
     historyServersCheck_->setChecked(settings.record_server_history);
@@ -1461,6 +1468,7 @@ bool SettingsWindow::onSaveClicked() {
     settings.discord_join_button = discordJoinCheck_->isChecked();
     settings.game_controllers = controllersCheck_->isChecked();
     settings.close_on_leave = closeOnLeaveCheck_->isChecked();
+    settings.use_jsdelivr = jsdelivrCheck_->isChecked();
     settings.server_region_notification = serverRegionCheck_->isChecked();
     settings.record_game_history = historyGamesCheck_->isChecked();
     settings.record_server_history = historyServersCheck_->isChecked();

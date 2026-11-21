@@ -160,6 +160,7 @@ StudSettings load_settings(const std::string& path) {
     read_bool("gameControllers", result.game_controllers);
     read_bool("serverRegionNotification", result.server_region_notification);
     read_bool("closeOnLeave", result.close_on_leave);
+    read_bool("useJsdelivr", result.use_jsdelivr);
     read_bool("recordGameHistory", result.record_game_history);
     read_bool("recordServerHistory", result.record_server_history);
     int days = 0;
@@ -208,6 +209,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc.insert(QStringLiteral("gameControllers"), settings.game_controllers);
     doc.insert(QStringLiteral("serverRegionNotification"), settings.server_region_notification);
     doc.insert(QStringLiteral("closeOnLeave"), settings.close_on_leave);
+    doc.insert(QStringLiteral("useJsdelivr"), settings.use_jsdelivr);
     doc.insert(QStringLiteral("recordGameHistory"), settings.record_game_history);
     doc.insert(QStringLiteral("recordServerHistory"), settings.record_server_history);
     doc.insert(QStringLiteral("cleanerDays"), settings.cleaner_days);

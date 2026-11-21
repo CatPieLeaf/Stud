@@ -37,6 +37,11 @@ if(STUD_BUILD_UI)
     target_link_libraries(stud_customization_guard_test PRIVATE stud_ui_mac_client)
     add_test(NAME customization_guard_test COMMAND stud_customization_guard_test)
 
+    # jsDelivr's address for a GitHub file.
+    add_executable(stud_github_mirror_test github_mirror_test.cpp)
+    target_link_libraries(stud_github_mirror_test PRIVATE stud_ui_mac_client)
+    add_test(NAME github_mirror_test COMMAND stud_github_mirror_test)
+
     # Roblox's settings file: one element changed, the rest untouched.
     add_executable(stud_roblox_settings_test roblox_settings_test.cpp)
     target_link_libraries(stud_roblox_settings_test PRIVATE stud_ui_mac_client)

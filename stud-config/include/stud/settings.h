@@ -96,6 +96,10 @@ struct StudSettings {
     bool open_player_directly = false;
 
     bool system_tray = true;
+
+    // Fetch what Stud gets from GitHub through jsDelivr's mirror first; GitHub stays
+    // the fallback. Off, jsDelivr is GitHub's fallback.
+    bool use_jsdelivr = false;
 };
 
 class SettingsError : public std::runtime_error {

@@ -1,5 +1,6 @@
 #include "update_check.h"
 
+#include "github_mirror.h"
 #include "notifications.h"
 
 #include <QCryptographicHash>
@@ -24,8 +25,9 @@
 namespace stud::ui {
 namespace {
 
-// releases/latest skips pre-releases.
+// Both skip pre-releases: GitHub's latest release, and jsDelivr's newest version tag.
 constexpr const char* kLatestApi = "https://api.github.com/repos/CatPieLeaf/Stud/releases/latest";
+constexpr const char* kLatestJsdelivr = "https://data.jsdelivr.com/v1/packages/gh/CatPieLeaf/Stud/resolved?specifier=latest";
 
 bool g_started = false;
 bool g_update_available = false;
@@ -168,29 +170,22 @@ void UpdateCheck::start() {
     if (g_started) return;
     g_started = true;
 
-    auto* manager = new QNetworkAccessManager(instance());
-    QNetworkRequest request((QUrl(QString::fromLatin1(kLatestApi))));
-    request.setRawHeader("Accept", "application/vnd.github+json");
-    // GitHub returns 403 without a User-Agent.
-    request.setRawHeader("User-Agent", "Stud/" STUD_VERSION);
-    request.setTransferTimeout(8000);
+    github::get_either(QUrl(QString::fromLatin1(kLatestApi)), QUrl(QString::fromLatin1(kLatestJsdelivr)),
+                       [](const QByteArray& body, bool from_jsdelivr, const QString& error) {
+                           if (!error.isEmpty()) return;  // failures are silent
+                           const QJsonDocument doc = QJsonDocument::fromJson(body);
+                           if (!doc.isObject()) return;
+                           QString tag = doc.object()
+                                             .value(from_jsdelivr ? QStringLiteral("version") : QStringLiteral("tag_name"))
+                                             .toString();
+                           if (tag.startsWith('v', Qt::CaseInsensitive)) tag.remove(0, 1);
+                           if (tag.isEmpty()) return;
 
-    QNetworkReply* reply = manager->get(request);
-    QObject::connect(reply, &QNetworkReply::finished, instance(), [reply]() {
-        reply->deleteLater();
-        if (reply->error() != QNetworkReply::NoError) return;  // failures are silent
-
-        const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
-        if (!doc.isObject()) return;
-        QString tag = doc.object().value(QStringLiteral("tag_name")).toString();
-        if (tag.startsWith('v', Qt::CaseInsensitive)) tag.remove(0, 1);
-        if (tag.isEmpty()) return;
-
-        if (!is_newer(tag, QStringLiteral(STUD_VERSION))) return;
-        g_update_available = true;
-        g_latest = tag;
-        Q_EMIT instance()->updateFound(tag);
-    });
+                           if (!is_newer(tag, QStringLiteral(STUD_VERSION))) return;
+                           g_update_available = true;
+                           g_latest = tag;
+                           Q_EMIT instance()->updateFound(tag);
+                       });
 }
 
 }  // namespace stud::ui

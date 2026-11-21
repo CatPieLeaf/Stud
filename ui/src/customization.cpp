@@ -1,5 +1,7 @@
 #include "customization.h"
 
+#include "github_mirror.h"
+
 #include "stud/stud_paths.h"
 
 #include <QCryptographicHash>
@@ -12,9 +14,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMap>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
-#include <QNetworkRequest>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
@@ -440,20 +439,9 @@ QString font_file(Part part) {
 
 namespace {
 
-// One download: its body, or why it failed.
+// One download, a GitHub file through jsDelivr when that is preferred or GitHub fails.
 void get(const QUrl& url, std::function<void(const QByteArray& body, const QString& error)> done) {
-    auto* net = new QNetworkAccessManager();
-    QNetworkRequest request(url);
-    request.setTransferTimeout(30000);
-    QNetworkReply* reply = net->get(request);
-    QObject::connect(reply, &QNetworkReply::finished, net, [net, reply, url, done] {
-        net->deleteLater();
-        if (reply->error() != QNetworkReply::NoError) {
-            done({}, QStringLiteral("could not download %1: %2").arg(url.fileName(), reply->errorString()));
-            return;
-        }
-        done(reply->readAll(), QString());
-    });
+    github::get(url, std::move(done));
 }
 
 // Several downloads, answered once every one has.
@@ -514,43 +502,69 @@ QString folder_title(QString name) {
     return name.replace(boundary, QStringLiteral(" "));
 }
 
-// Every cursor folder with both arrows, the first repository's copy of each name.
-void fetch_cursors(std::function<void(const QList<Offer>&, const QString&)> done) {
-    QList<QUrl> trees;
-    for (const Repository& repository : repositories()) {
-        trees << QUrl(QStringLiteral("https://api.github.com/repos/%1/git/trees/HEAD?recursive=1").arg(repository.path));
-    }
-    get_all(trees, [done](const QList<QByteArray>& bodies, const QString& error) {
-        QList<Offer> offers;
-        QStringList seen;
-        const QString target = files_of(Part::Cursor).directory + QLatin1Char('/');
-        for (qsizetype r = 0; r < bodies.size(); ++r) {
-            const Repository& repository = repositories().at(r);
-            QSet<QString> paths;
-            for (const QJsonValue entry : QJsonDocument::fromJson(bodies.at(r)).object().value(QStringLiteral("tree")).toArray()) {
+// Every file in `repository` at its default branch: GitHub's tree or jsDelivr's listing.
+void list_files(const Repository& repository, std::function<void(const QSet<QString>& paths, const QString& error)> done) {
+    const QUrl tree(QStringLiteral("https://api.github.com/repos/%1/git/trees/HEAD?recursive=1").arg(repository.path));
+    const QUrl listing(QStringLiteral("https://data.jsdelivr.com/v1/packages/gh/%1@HEAD?structure=flat").arg(repository.path));
+    github::get_either(tree, listing, [done](const QByteArray& body, bool from_jsdelivr, const QString& error) {
+        QSet<QString> paths;
+        const QJsonObject answer = QJsonDocument::fromJson(body).object();
+        if (from_jsdelivr) {
+            // jsDelivr names them from the repository's root, with a leading slash.
+            for (const QJsonValue file : answer.value(QStringLiteral("files")).toArray()) {
+                paths.insert(file.toObject().value(QStringLiteral("name")).toString().mid(1));
+            }
+        } else {
+            for (const QJsonValue entry : answer.value(QStringLiteral("tree")).toArray()) {
                 paths.insert(entry.toObject().value(QStringLiteral("path")).toString());
             }
-            const QString cursors = repository.mods + QStringLiteral("Cursor/");
-            QStringList folders;
-            for (const QString& path : paths) {
-                if (!path.startsWith(cursors) || !path.endsWith(QLatin1String("/ArrowCursor.png"))) continue;
-                const QString name = path.mid(cursors.size()).section(QLatin1Char('/'), 0, 0);
-                if (paths.contains(cursors + name + QStringLiteral("/ArrowFarCursor.png"))) folders << name;
-            }
-            folders.sort();
-            for (const QString& name : folders) {
-                if (seen.contains(name)) continue;
-                seen << name;
-                const QString base = cursors + name + QLatin1Char('/');
-                offers << Offer{folder_title(name), repository.name, raw(repository, base + QStringLiteral("ArrowCursor.png")),
-                                {{target + QStringLiteral("ArrowCursor.png"), raw(repository, base + QStringLiteral("ArrowCursor.png"))},
-                                 {target + QStringLiteral("ArrowFarCursor.png"),
-                                  raw(repository, base + QStringLiteral("ArrowFarCursor.png"))}},
-                                {}};
-            }
         }
-        done(offers, offers.isEmpty() ? error : QString());
+        done(paths, error);
     });
+}
+
+// Every cursor folder with both arrows, the first repository's copy of each name.
+void fetch_cursors(std::function<void(const QList<Offer>&, const QString&)> done) {
+    struct Pending {
+        QList<QSet<QString>> listed;
+        qsizetype left;
+        QString error;
+    };
+    const qsizetype count = repositories().size();
+    auto pending = std::make_shared<Pending>(Pending{QList<QSet<QString>>(count), count, {}});
+    for (qsizetype r = 0; r < count; ++r) {
+        list_files(repositories().at(r), [pending, r, done](const QSet<QString>& paths, const QString& error) {
+            if (!error.isEmpty()) pending->error = error;
+            pending->listed[r] = paths;
+            if (--pending->left > 0) return;
+            QList<Offer> offers;
+            QStringList seen;
+            const QString target = files_of(Part::Cursor).directory + QLatin1Char('/');
+            for (qsizetype i = 0; i < pending->listed.size(); ++i) {
+                const Repository& repository = repositories().at(i);
+                const QSet<QString>& files = pending->listed.at(i);
+                const QString cursors = repository.mods + QStringLiteral("Cursor/");
+                QStringList folders;
+                for (const QString& path : files) {
+                    if (!path.startsWith(cursors) || !path.endsWith(QLatin1String("/ArrowCursor.png"))) continue;
+                    const QString name = path.mid(cursors.size()).section(QLatin1Char('/'), 0, 0);
+                    if (files.contains(cursors + name + QStringLiteral("/ArrowFarCursor.png"))) folders << name;
+                }
+                folders.sort();
+                for (const QString& name : folders) {
+                    if (seen.contains(name)) continue;
+                    seen << name;
+                    const QString base = cursors + name + QLatin1Char('/');
+                    offers << Offer{folder_title(name), repository.name, raw(repository, base + QStringLiteral("ArrowCursor.png")),
+                                    {{target + QStringLiteral("ArrowCursor.png"), raw(repository, base + QStringLiteral("ArrowCursor.png"))},
+                                     {target + QStringLiteral("ArrowFarCursor.png"),
+                                      raw(repository, base + QStringLiteral("ArrowFarCursor.png"))}},
+                                    {}};
+                }
+            }
+            done(offers, offers.isEmpty() ? pending->error : QString());
+        });
+    }
 }
 
 // Froststrap's community mods, each as {"id", "name", "download", "modtype", ...}.

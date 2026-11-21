@@ -58,6 +58,7 @@ add_library(stud_ui_mac_client STATIC
     src/code_signature.cpp
     "${CMAKE_CURRENT_BINARY_DIR}/generated/apple_root_ca.h"
     src/customization.cpp
+    src/github_mirror.cpp
     src/fflags.cpp
     src/cpu_cores.cpp
     src/flatpak_permissions.cpp
