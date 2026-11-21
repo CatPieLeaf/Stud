@@ -1,8 +1,8 @@
 {
   "lock_version": "1.0",
   "root": {
-    "origin": "local.cpak/package/90ac3af82f50d9cb",
-    "manifest_sha256": "90ac3af82f50d9cbdc2b39581e20e8c61e03a2c40355b8bac1ae217cab2c1ab4",
+    "origin": "local.cpak/package/41f695e5cb10d4f9",
+    "manifest_sha256": "41f695e5cb10d4f90e432833b77ea738d069af34211548cc228c216ad3a4beb0",
     "image": "ghcr.io/catpieleaf/stud@sha256:bedb08a081f8b43d7202fabf7ab884d9a35a072e88ba7e39ab93022d2c86e137",
     "resolved_image": "ghcr.io/catpieleaf/stud@sha256:bedb08a081f8b43d7202fabf7ab884d9a35a072e88ba7e39ab93022d2c86e137",
     "manifest": {
@@ -52,6 +52,8 @@
         "hostApplications": false,
         "filePicker": {
           "openFile": true,
+          "openFolder": true,
+          "saveFile": true,
           "persistent": true
         },
         "clipboard": {},
