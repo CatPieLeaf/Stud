@@ -71,14 +71,20 @@ QHash<QUrl, QIcon>& offer_previews() {
 }
 
 // Only the drawn part: Roblox's cursors sit in a mostly empty square, so scaling the
-// whole square to a preview leaves the arrow a few pixels tall.
+// whole square to a preview leaves the arrow a few pixels tall. A soft drop shadow, at
+// under half the image's strongest opacity, doesn't count as drawn.
 QImage visible_part(const QImage& image) {
     const QImage pixels = image.convertToFormat(QImage::Format_ARGB32);
+    int strongest = 0;
+    for (int y = 0; y < pixels.height(); ++y) {
+        const auto* line = reinterpret_cast<const QRgb*>(pixels.constScanLine(y));
+        for (int x = 0; x < pixels.width(); ++x) strongest = std::max(strongest, qAlpha(line[x]));
+    }
     QRect drawn;
     for (int y = 0; y < pixels.height(); ++y) {
         const auto* line = reinterpret_cast<const QRgb*>(pixels.constScanLine(y));
         for (int x = 0; x < pixels.width(); ++x) {
-            if (qAlpha(line[x]) != 0) drawn |= QRect(x, y, 1, 1);
+            if (qAlpha(line[x]) * 2 >= strongest && qAlpha(line[x]) != 0) drawn |= QRect(x, y, 1, 1);
         }
     }
     return drawn.isEmpty() ? image : image.copy(drawn);
@@ -323,13 +329,13 @@ CustomizePage::CustomizePage(std::function<void()> import, QWidget* parent) : QW
         page->addWidget(box);
     }
 
-    auto* experiments = new QGroupBox(QStringLiteral("Experiments"), this);
-    auto* tries = new QVBoxLayout(experiments);
-    auto* oldLogin = new QCheckBox(QStringLiteral("Old login screen, from Froststrap"), experiments);
+    auto* login = new QGroupBox(QStringLiteral("Login screen"), this);
+    auto* loginRows = new QVBoxLayout(login);
+    auto* oldLogin = new QCheckBox(QStringLiteral("Old login screen, from Froststrap"), login);
     oldLogin->setToolTip(QStringLiteral("The login background and logo Roblox had before."));
-    tries->addWidget(oldLogin);
-    QLabel* loginError = error_label(experiments);
-    tries->addWidget(loginError);
+    loginRows->addWidget(oldLogin);
+    QLabel* loginError = error_label(login);
+    loginRows->addWidget(loginError);
     connect(oldLogin, &QCheckBox::toggled, this, [oldLogin, loginError](bool on) {
         oldLogin->setEnabled(false);
         QPointer<QCheckBox> guard = oldLogin;
@@ -346,7 +352,7 @@ CustomizePage::CustomizePage(std::function<void()> import, QWidget* parent) : QW
         const QSignalBlocker quiet(oldLogin);
         oldLogin->setChecked(customization::old_login_screen());
     });
-    page->addWidget(experiments);
+    page->addWidget(login);
 
     auto* actions = new QHBoxLayout();
     auto* importOther = new QPushButton(QStringLiteral("Import from Bloxstrap, Fishstrap or Froststrap..."), this);

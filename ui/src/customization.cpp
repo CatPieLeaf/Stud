@@ -411,13 +411,13 @@ Applied applied(Part part) {
 QImage image(Part part) {
     const PartFiles p = files_of(part);
     if (p.files.isEmpty() || !p.files.first().endsWith(QLatin1String(".png"))) return {};
-    // ArrowCursor is the hand over clickable things; ArrowFarCursor is the arrow itself.
-    const QString shown = part == Part::Cursor ? QStringLiteral("ArrowFarCursor.png") : p.files.first();
-    const QString relative = p.directory + QLatin1Char('/') + shown;
-    const QString custom = folder(client::Product::Player) + QLatin1Char('/') + relative;
+    const QString custom = folder(client::Product::Player) + QLatin1Char('/') + p.directory + QLatin1Char('/') + p.files.first();
     if (QFileInfo::exists(custom)) return QImage(custom);
     const auto build = client::installed(client::Product::Player);
     if (!build) return {};
+    // Roblox's own ArrowCursor is the hand over clickable things; its arrow is ArrowFarCursor.
+    const QString relative =
+        p.directory + QLatin1Char('/') + (part == Part::Cursor ? QStringLiteral("ArrowFarCursor.png") : p.files.first());
     const QString original = state_dir(*build) + QStringLiteral("/originals/") + relative;
     return QImage(QFileInfo::exists(original) ? original : resources(*build) + QLatin1Char('/') + relative);
 }
@@ -501,6 +501,8 @@ const QUrl kFroststrapCatalogue(QStringLiteral("https://raw.githubusercontent.co
 // Froststrap's own numbers for the kinds of community mod.
 constexpr int kFroststrapAvatarEditor = 4;
 const QString kFroststrapOldLogin = QStringLiteral("old-login-screen");
+// Community mods Stud leaves out of its menus.
+const QStringList kFroststrapSkipped = {QStringLiteral("catavatareditor")};
 
 // The release Bloxstrap's emoji fonts come from.
 const QUrl kEmojiFonts(QStringLiteral("https://api.github.com/repos/bloxstraplabs/rbxcustom-fontemojis/releases/latest"));
@@ -540,7 +542,7 @@ void fetch_cursors(std::function<void(const QList<Offer>&, const QString&)> done
                 if (seen.contains(name)) continue;
                 seen << name;
                 const QString base = cursors + name + QLatin1Char('/');
-                offers << Offer{folder_title(name), repository.name, raw(repository, base + QStringLiteral("ArrowFarCursor.png")),
+                offers << Offer{folder_title(name), repository.name, raw(repository, base + QStringLiteral("ArrowCursor.png")),
                                 {{target + QStringLiteral("ArrowCursor.png"), raw(repository, base + QStringLiteral("ArrowCursor.png"))},
                                  {target + QStringLiteral("ArrowFarCursor.png"),
                                   raw(repository, base + QStringLiteral("ArrowFarCursor.png"))}},
@@ -551,7 +553,7 @@ void fetch_cursors(std::function<void(const QList<Offer>&, const QString&)> done
     });
 }
 
-// Froststrap's community mods, each as {"id", "name", "download", "thumbnail", "modtype"}.
+// Froststrap's community mods, each as {"id", "name", "download", "modtype", ...}.
 void fetch_catalogue(std::function<void(const QJsonArray& mods, const QString& error)> done) {
     get(kFroststrapCatalogue, [done](const QByteArray& body, const QString& error) {
         done(QJsonDocument::fromJson(body).object().value(QStringLiteral("communityMods")).toArray(), error);
@@ -567,9 +569,11 @@ void fetch_avatar_backgrounds(std::function<void(const QList<Offer>&, const QStr
     fetch_catalogue([offers, done](const QJsonArray& mods, const QString& error) mutable {
         for (const QJsonValue value : mods) {
             const QJsonObject mod = value.toObject();
-            if (mod.value(QStringLiteral("modtype")).toInt() != kFroststrapAvatarEditor) continue;
-            offers << Offer{mod.value(QStringLiteral("name")).toString(), QStringLiteral("Froststrap"),
-                            QUrl(mod.value(QStringLiteral("thumbnail")).toString()), {},
+            if (mod.value(QStringLiteral("modtype")).toInt() != kFroststrapAvatarEditor ||
+                kFroststrapSkipped.contains(mod.value(QStringLiteral("id")).toString())) {
+                continue;
+            }
+            offers << Offer{mod.value(QStringLiteral("name")).toString(), QStringLiteral("Froststrap"), {}, {},
                             QUrl(mod.value(QStringLiteral("download")).toString())};
         }
         done(offers, mods.isEmpty() ? error : QString());
