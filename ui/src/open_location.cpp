@@ -4,8 +4,9 @@
 #include <QDBusInterface>
 #include <QDBusMessage>
 #include <QDBusUnixFileDescriptor>
-#include <QFile>
 #include <QDesktopServices>
+#include <QFile>
+#include <QProcess>
 #include <QVariantMap>
 
 #include <fcntl.h>
@@ -15,9 +16,9 @@ namespace stud::ui {
 
 namespace {
 
-// Through the desktop portal, which reaches the host's handlers from a container
-// such as cpak's, where Qt's xdg-open fallback has nothing to run. The portal takes
-// a local file as a descriptor rather than a file:// address.
+// Through the desktop portal, which reaches the host's handlers from a sandbox where
+// Qt's xdg-open fallback has nothing to run. It takes a local file as a descriptor
+// rather than a file:// address.
 bool open_through_portal(const QUrl& url) {
     QDBusInterface portal(QStringLiteral("org.freedesktop.portal.Desktop"),
                           QStringLiteral("/org/freedesktop/portal/desktop"),
@@ -39,6 +40,12 @@ bool open_through_portal(const QUrl& url) {
 }  // namespace
 
 void open_location(const QUrl& url) {
+    // cpak has no desktop portal, and its xdg-open refuses file:// but maps a plain
+    // path in the sandbox's home to where that home really is on the host.
+    if (url.isLocalFile() && qEnvironmentVariableIsSet("CPAK_CONTAINER_ID") &&
+        QProcess::startDetached(QStringLiteral("xdg-open"), {url.toLocalFile()})) {
+        return;
+    }
     if (!open_through_portal(url)) QDesktopServices::openUrl(url);
 }
 
