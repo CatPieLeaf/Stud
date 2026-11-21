@@ -67,8 +67,12 @@ demonstrably does:
   displayX11 to keep it would be a far larger permission than the
   feature is worth.
 - **`filePicker` + `xdg-download` read-only**; customizations and FFlag
-  imports are picked from the user's files, and Downloads is where a
-  downloaded one lands. Nothing else of the host's home is visible.
+  imports are picked from the user's files (`openFile`), a bootstrapper's
+  folder for the import (`openFolder`), and where exported logs go
+  (`saveFile`). Downloads is where a downloaded one lands. Nothing else of
+  the host's home is visible. A picker cpak refuses answers at once, and
+  Qt's portal dialog misses an answer that quick and waits forever, so
+  every kind of file dialog Stud opens has to be granted.
 - **`sessionBus.talk`** to the system tray's watcher, and **`own`** of
   `org.kde.StatusNotifierItem-`, for the tray icon. It needs a cpak release
   with [Containerpak/cpak#78](https://github.com/Containerpak/cpak/pull/78),

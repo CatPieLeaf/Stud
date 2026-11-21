@@ -28,6 +28,8 @@
     "network": true,
     "filePicker": {
       "openFile": true,
+      "openFolder": true,
+      "saveFile": true,
       "persistent": true
     },
     "filesystem": [
