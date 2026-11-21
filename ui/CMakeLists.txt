@@ -78,6 +78,7 @@ add_executable(stud-ui
     src/history.cpp
     src/chooser.cpp
     src/settings_window.cpp
+    src/customize_page.cpp
     src/command_warning.cpp
     src/open_location.cpp
     src/project_links.cpp

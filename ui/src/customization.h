@@ -7,6 +7,7 @@
 #include "mac_client.h"
 
 #include <QColor>
+#include <QImage>
 #include <QString>
 
 #include <functional>
@@ -38,6 +39,24 @@ void remove(Part part);
 void download_classic(Part part, const QString& variant, std::function<void(const QString& error)> done);
 
 bool present(Part part);
+
+// What a part has now, as Settings shows it: "Roblox's default", the chosen file's
+// name, a recolour (with `colour` set) or a Bloxstrap classic.
+struct Applied {
+    QString text;
+    QColor colour;
+};
+Applied applied(Part part);
+
+// A picture part as the client will show it: the custom image, else the installed
+// client's own. Null for parts without one, or before Roblox is installed.
+QImage image(Part part);
+
+// The custom font file a font part uses; empty while it is Roblox's own.
+QString font_file(Part part);
+
+// Bloxstrap's classic cursor `variant`, fetched to show before it is chosen.
+void fetch_classic_cursor(const QString& variant, std::function<void(const QImage& image)> done);
 
 // Crash guard: a run with customizations that differ from the last good set is a
 // trial. If it crashes, the new or changed files move to disabled_folder() and the

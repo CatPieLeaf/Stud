@@ -67,6 +67,37 @@ QString state_dir(const client::Build& build) {
 }
 QString resources(const client::Build& build) { return build.app + QStringLiteral("/Contents/Resources"); }
 
+const QString kBloxstrapMods =
+    QStringLiteral("https://raw.githubusercontent.com/bloxstraplabs/bloxstrap/main/Bloxstrap/Resources/Mods/");
+
+// Where each part came from, outside the folder so apply() never copies it into the client.
+QString sources_file() {
+    return QString::fromStdString(stud::paths::config_dir()) + QStringLiteral("/customizations-sources.json");
+}
+
+QString source_key(Part part) { return QString::number(static_cast<int>(part)); }
+
+QJsonObject read_sources() {
+    QFile file(sources_file());
+    if (!file.open(QIODevice::ReadOnly)) return {};
+    return QJsonDocument::fromJson(file.readAll()).object();
+}
+
+// An empty `source` forgets the part's.
+void record_source(Part part, const QJsonObject& source) {
+    QJsonObject all = read_sources();
+    if (source.isEmpty()) {
+        all.remove(source_key(part));
+    } else {
+        all.insert(source_key(part), source);
+    }
+    QSaveFile file(sources_file());
+    if (file.open(QIODevice::WriteOnly)) {
+        file.write(QJsonDocument(all).toJson(QJsonDocument::Compact));
+        file.commit();
+    }
+}
+
 bool copy_over(const QString& from, const QString& to) {
     QDir().mkpath(QFileInfo(to).absolutePath());
     QFile::remove(to);
@@ -253,6 +284,7 @@ bool use_file(Part part, const QString& file, QString* error) {
             return false;
         }
     }
+    record_source(part, {{QStringLiteral("file"), QFileInfo(file).fileName()}});
     return true;
 }
 
@@ -289,6 +321,7 @@ bool recolour(Part part, const QColor& colour, QString* error) {
             return false;
         }
     }
+    record_source(part, {{QStringLiteral("colour"), colour.name()}});
     return true;
 }
 
@@ -297,11 +330,10 @@ void remove(Part part) {
     for (const QString& name : p.files) {
         QFile::remove(folder(client::Product::Player) + QLatin1Char('/') + p.directory + QLatin1Char('/') + name);
     }
+    record_source(part, {});
 }
 
 void download_classic(Part part, const QString& variant, std::function<void(const QString& error)> done) {
-    static const QString kMods =
-        QStringLiteral("https://raw.githubusercontent.com/bloxstraplabs/bloxstrap/main/Bloxstrap/Resources/Mods/");
     const PartFiles p = files_of(part);
     // Each target file and its source in Bloxstrap's Mods folder, as Bloxstrap maps them.
     QStringList sources;
@@ -330,7 +362,7 @@ void download_classic(Part part, const QString& variant, std::function<void(cons
     auto pending = std::make_shared<Pending>(Pending{QVector<QByteArray>(sources.size()), int(sources.size()), {}});
     const QString dir = folder(client::Product::Player) + QLatin1Char('/') + p.directory;
     for (int i = 0; i < sources.size(); ++i) {
-        QNetworkRequest request{QUrl(kMods + sources.at(i))};
+        QNetworkRequest request{QUrl(kBloxstrapMods + sources.at(i))};
         request.setTransferTimeout(30000);
         QNetworkReply* reply = net->get(request);
         QObject::connect(reply, &QNetworkReply::finished, net, [=] {
@@ -356,6 +388,7 @@ void download_classic(Part part, const QString& variant, std::function<void(cons
                     return done(QStringLiteral("could not save %1 into the customizations folder").arg(p.files.at(k)));
                 }
             }
+            record_source(part, {{QStringLiteral("classic"), variant}});
             done(QString());
         });
     }
@@ -370,6 +403,55 @@ bool present(Part part) {
         }
     }
     return false;
+}
+
+Applied applied(Part part) {
+    if (!present(part)) return {QStringLiteral("Roblox's default"), {}};
+    // Files put in by hand or by an import have no recorded source.
+    const QJsonObject source = read_sources().value(source_key(part)).toObject();
+    if (source.contains(QStringLiteral("file"))) return {source.value(QStringLiteral("file")).toString(), {}};
+    if (source.contains(QStringLiteral("colour"))) {
+        return {QStringLiteral("Recoloured"), QColor(source.value(QStringLiteral("colour")).toString())};
+    }
+    if (source.contains(QStringLiteral("classic"))) {
+        const QString variant = source.value(QStringLiteral("classic")).toString();
+        return {variant.isEmpty() ? QStringLiteral("Bloxstrap's classic") : QStringLiteral("Bloxstrap's %1").arg(variant),
+                {}};
+    }
+    return {QStringLiteral("Custom files"), {}};
+}
+
+QImage image(Part part) {
+    const PartFiles p = files_of(part);
+    if (p.files.isEmpty() || !p.files.first().endsWith(QLatin1String(".png"))) return {};
+    const QString relative = p.directory + QLatin1Char('/') + p.files.first();
+    const QString custom = folder(client::Product::Player) + QLatin1Char('/') + relative;
+    if (QFileInfo::exists(custom)) return QImage(custom);
+    const auto build = client::installed(client::Product::Player);
+    if (!build) return {};
+    const QString original = state_dir(*build) + QStringLiteral("/originals/") + relative;
+    return QImage(QFileInfo::exists(original) ? original : resources(*build) + QLatin1Char('/') + relative);
+}
+
+QString font_file(Part part) {
+    if (part != Part::Font && part != Part::MonoFont) return {};
+    const PartFiles p = files_of(part);
+    for (const QString& name : p.files) {
+        const QString path = folder(client::Product::Player) + QLatin1Char('/') + p.directory + QLatin1Char('/') + name;
+        if (QFileInfo::exists(path)) return path;
+    }
+    return {};
+}
+
+void fetch_classic_cursor(const QString& variant, std::function<void(const QImage& image)> done) {
+    auto* net = new QNetworkAccessManager();
+    QNetworkRequest request{QUrl(kBloxstrapMods + QStringLiteral("Cursor/From%1/ArrowCursor.png").arg(variant))};
+    request.setTransferTimeout(30000);
+    QNetworkReply* reply = net->get(request);
+    QObject::connect(reply, &QNetworkReply::finished, net, [net, reply, done] {
+        net->deleteLater();
+        done(reply->error() == QNetworkReply::NoError ? QImage::fromData(reply->readAll()) : QImage());
+    });
 }
 
 QString disabled_folder(client::Product product) { return folder(product) + QStringLiteral("-disabled"); }

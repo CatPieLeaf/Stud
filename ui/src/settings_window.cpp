@@ -7,6 +7,7 @@
 #include "cube_view.h"
 #include "gpu_enum.h"
 #include "customization.h"
+#include "customize_page.h"
 #include "fflags.h"
 #include "desktop_entry.h"
 #include "history.h"
@@ -39,7 +40,6 @@
 #include <QFrame>
 #include <QLabel>
 #include <QMessageBox>
-#include <QColorDialog>
 #include <QFileDialog>
 #include <QGridLayout>
 #include <QInputDialog>
@@ -337,121 +337,8 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     discord->addStretch();
 
     // ---- Customizations ----------------------------------------------------------
-    // Mirrors Roblox's content tree, so Bloxstrap and Froststrap folders drop in.
     auto* customizeTab = add_tab("Customize");
-    auto* folders = new QHBoxLayout();
-    for (const auto product : {client::Product::Player, client::Product::Studio}) {
-        auto* open = new QPushButton(product == client::Product::Studio ? "Open Studio customizations folder"
-                                                                        : "Open Player customizations folder",
-                                     this);
-        open->setIcon(mono_icon("folder-open", QStyle::SP_DirOpenIcon));
-        connect(open, &QPushButton::clicked, this, [product] {
-            QDir().mkpath(customization::folder(product));
-            open_location(QUrl::fromLocalFile(customization::folder(product)));
-        });
-        folders->addWidget(open);
-    }
-    customizeTab->addLayout(folders);
-    auto* grid = new QGridLayout();
-    struct Row {
-        customization::Part part;
-        const char* label;
-        const char* filter;  // nullptr when there is no file to choose
-        bool colour;
-        // Bloxstrap's classic versions, downloaded from its repository: "" for one
-        // "Classic" button, or the variants each with its own button.
-        QStringList classic = {};
-    };
-    const Row rows[] = {
-        {customization::Part::Cursor, "Cursor", "Images (*.png)", true, {"2006", "2013"}},
-        {customization::Part::ShiftLock, "Shift lock", "Images (*.png)", true},
-        {customization::Part::EmoteWheel, "Emote wheel", nullptr, true},
-        {customization::Part::DeathSound, "Death sound", "Sounds (*.ogg)", false},
-        {customization::Part::CharacterSounds, "Character sounds", nullptr, false, {""}},
-        {customization::Part::AvatarBackground, "Avatar background", nullptr, false, {""}},
-        {customization::Part::Font, "Game font", "Fonts (*.ttf *.otf)", false},
-        {customization::Part::MonoFont, "Code font", "Fonts (*.ttf *.otf)", false},
-    };
-    int row = 0;
-    for (const Row& r : rows) {
-        auto* name = new QLabel(QString::fromLatin1(r.label), this);
-        auto* state = new QLabel(this);
-        const auto refresh = [state, part = r.part] {
-            state->setText(customization::present(part) ? QStringLiteral("Custom") : QStringLiteral("Default"));
-        };
-        refresh();
-        grid->addWidget(name, row, 0);
-        grid->addWidget(state, row, 1);
-        int column = 2;
-        if (r.filter != nullptr) {
-            auto* choose = new QPushButton("Choose file...", this);
-            choose->setIcon(mono_icon("document-open", QStyle::SP_DialogOpenButton));
-            connect(choose, &QPushButton::clicked, this, [this, r, refresh] {
-                const QString file = QFileDialog::getOpenFileName(this, QString::fromLatin1(r.label),
-                                                                  QString(), QString::fromLatin1(r.filter));
-                if (file.isEmpty()) return;
-                QString error;
-                statusLabel_->setText(customization::use_file(r.part, file, &error)
-                                          ? QStringLiteral("Applied at the next launch.")
-                                          : error.toHtmlEscaped());
-                refresh();
-            });
-            grid->addWidget(choose, row, column++);
-        }
-        if (r.colour) {
-            auto* colour = new QPushButton("Colour...", this);
-            colour->setIcon(mono_icon("color-picker", QStyle::SP_DesktopIcon));
-            connect(colour, &QPushButton::clicked, this, [this, r, refresh] {
-                const QColor picked = QColorDialog::getColor(Qt::white, this, QString::fromLatin1(r.label));
-                if (!picked.isValid()) return;
-                QString error;
-                statusLabel_->setText(customization::recolour(r.part, picked, &error)
-                                          ? QStringLiteral("Applied at the next launch.")
-                                          : error.toHtmlEscaped());
-                refresh();
-            });
-            grid->addWidget(colour, row, column++);
-        }
-        auto* reset = new QPushButton("Default", this);
-        reset->setIcon(mono_icon("edit-undo", QStyle::SP_DialogResetButton));
-        reset->setToolTip("Go back to the default");
-        connect(reset, &QPushButton::clicked, this, [this, r, refresh] {
-            customization::remove(r.part);
-            statusLabel_->setText(QStringLiteral("Back to the default at the next launch."));
-            refresh();
-        });
-        grid->addWidget(reset, row, 4);
-        if (!r.classic.isEmpty()) {
-            auto* classics = new QHBoxLayout();
-            for (const QString& variant : r.classic) {
-                auto* button = new QPushButton(variant.isEmpty() ? QStringLiteral("Classic") : variant, this);
-                button->setIcon(mono_icon("download", QStyle::SP_ArrowDown));
-                button->setToolTip("Downloads Bloxstrap's classic version from its GitHub repository.");
-                connect(button, &QPushButton::clicked, this, [this, r, refresh, variant, button] {
-                    button->setEnabled(false);
-                    statusLabel_->setText(QStringLiteral("Downloading from Bloxstrap..."));
-                    QPointer<QPushButton> guard = button;
-                    QPointer<QLabel> status = statusLabel_;
-                    customization::download_classic(r.part, variant, [guard, status, refresh](const QString& error) {
-                        if (guard) guard->setEnabled(true);
-                        if (!status) return;
-                        status->setText(error.isEmpty() ? QStringLiteral("Applied at the next launch.") : error.toHtmlEscaped());
-                        refresh();
-                    });
-                });
-                classics->addWidget(button);
-            }
-            grid->addLayout(classics, row, 5);
-        }
-        ++row;
-    }
-    customizeTab->addLayout(grid);
-    auto* importOther = new QPushButton("Import from Bloxstrap, Fishstrap or Froststrap...", this);
-    importOther->setIcon(mono_icon("document-import", QStyle::SP_DialogOpenButton));
-    importOther->setToolTip("Choose that bootstrapper's folder: its customizations are copied in, and its "
-                            "FastFlags added to the FFlags tab.");
-    connect(importOther, &QPushButton::clicked, this, &SettingsWindow::onImportBootstrapperClicked);
-    customizeTab->addWidget(importOther, 0, Qt::AlignLeft);
+    customizeTab->addWidget(new CustomizePage([this] { onImportBootstrapperClicked(); }, this));
     customizeTab->addStretch();
 
     // ---- FFlags --------------------------------------------------------
