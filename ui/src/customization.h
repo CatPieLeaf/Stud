@@ -8,7 +8,10 @@
 
 #include <QColor>
 #include <QImage>
+#include <QList>
+#include <QPair>
 #include <QString>
+#include <QUrl>
 
 #include <functional>
 
@@ -22,9 +25,10 @@ QString folder(client::Product product);
 bool apply(const client::Build& build, client::Product product, QString* error);
 
 // Generated customizations offered in Settings.
-enum class Part { Cursor, ShiftLock, EmoteWheel, DeathSound, Font, MonoFont, AvatarBackground, CharacterSounds };
+enum class Part { Cursor, ShiftLock, EmoteWheel, DeathSound, Font, MonoFont, AvatarBackground, CharacterSounds, Emoji };
 
-// An image for cursor or shift lock, .ogg for the death sound, .ttf/.otf for the fonts.
+// An image for cursor or shift lock, .ogg for the death sound, .ttf/.otf for the fonts
+// and .ttf for the emoji.
 bool use_file(Part part, const QString& file, QString* error);
 
 // Recolours the installed client's own images, keeping their shapes.
@@ -32,11 +36,30 @@ bool recolour(Part part, const QColor& colour, QString* error);
 
 void remove(Part part);
 
-// Bloxstrap's classic files, downloaded from its repository into the customizations
-// folder: the old avatar editor background, the old character sounds, or the 2006 or
-// 2013 cursor (`variant`). Nothing is written unless every file arrives; `done` gets
-// an empty string or what failed.
-void download_classic(Part part, const QString& variant, std::function<void(const QString& error)> done);
+// A look another bootstrapper offers for a part, downloaded only once chosen.
+struct Offer {
+    QString name;
+    QString source;
+    QUrl preview;  // a picture of it, when there is one
+    // Its files with their place in the content tree, or an archive laid out as one.
+    QList<QPair<QString, QUrl>> files;
+    QUrl archive;
+};
+
+// What Bloxstrap, Froststrap and Voidstrap offer for `part`, looked up in their
+// repositories and catalogues; empty, with `error` set, when none could be reached.
+void fetch_offers(Part part, std::function<void(const QList<Offer>& offers, const QString& error)> done);
+
+// Downloads `offer` into the customizations folder; nothing is written unless every
+// file arrives. `done` gets an empty string or what failed.
+void install(Part part, const Offer& offer, std::function<void(const QString& error)> done);
+
+// A picture from the network, such as an offer's preview.
+void fetch_image(const QUrl& url, std::function<void(const QImage& image)> done);
+
+// Froststrap's Old Login Screen: the pre-2026 login background and logo.
+bool old_login_screen();
+void set_old_login_screen(bool on, std::function<void(const QString& error)> done);
 
 bool present(Part part);
 
@@ -52,11 +75,9 @@ Applied applied(Part part);
 // client's own. Null for parts without one, or before Roblox is installed.
 QImage image(Part part);
 
-// The custom font file a font part uses; empty while it is Roblox's own.
+// The font file a font part uses: the custom one, and for the emoji also the installed
+// client's own; empty otherwise.
 QString font_file(Part part);
-
-// Bloxstrap's classic cursor `variant`, fetched to show before it is chosen.
-void fetch_classic_cursor(const QString& variant, std::function<void(const QImage& image)> done);
 
 // Crash guard: a run with customizations that differ from the last good set is a
 // trial. If it crashes, the new or changed files move to disabled_folder() and the

@@ -15,8 +15,13 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QRegularExpression>
 #include <QSaveFile>
+#include <QSet>
+#include <QTemporaryDir>
 #include <QUrl>
+
+#include <memory>
 #include <QStringList>
 
 namespace stud::ui::customization {
@@ -57,6 +62,8 @@ PartFiles files_of(Part part) {
                      QStringLiteral("action_get_up.mp3"), QStringLiteral("action_falling.mp3"),
                      QStringLiteral("action_jump_land.mp3"), QStringLiteral("action_swim.mp3"),
                      QStringLiteral("impact_water.mp3")}};
+        case Part::Emoji:
+            return {QStringLiteral("content/fonts"), {QStringLiteral("TwemojiMozilla.ttf")}};
     }
     return {};
 }
@@ -67,9 +74,6 @@ QString state_dir(const client::Build& build) {
 }
 QString resources(const client::Build& build) { return build.app + QStringLiteral("/Contents/Resources"); }
 
-const QString kBloxstrapMods =
-    QStringLiteral("https://raw.githubusercontent.com/bloxstraplabs/bloxstrap/main/Bloxstrap/Resources/Mods/");
-
 // Where each part came from, outside the folder so apply() never copies it into the client.
 QString sources_file() {
     return QString::fromStdString(stud::paths::config_dir()) + QStringLiteral("/customizations-sources.json");
@@ -77,25 +81,63 @@ QString sources_file() {
 
 QString source_key(Part part) { return QString::number(static_cast<int>(part)); }
 
+// The old login screen's files, each as {"from": its path in the archive, "to": the client's}.
+const QString kLoginKey = QStringLiteral("login");
+
 QJsonObject read_sources() {
     QFile file(sources_file());
     if (!file.open(QIODevice::ReadOnly)) return {};
     return QJsonDocument::fromJson(file.readAll()).object();
 }
 
-// An empty `source` forgets the part's.
-void record_source(Part part, const QJsonObject& source) {
+// An empty `value` forgets `key`.
+void store_source(const QString& key, const QJsonValue& value) {
     QJsonObject all = read_sources();
-    if (source.isEmpty()) {
-        all.remove(source_key(part));
+    const bool empty = value.isNull() || value.isUndefined() || (value.isObject() && value.toObject().isEmpty()) ||
+                       (value.isArray() && value.toArray().isEmpty());
+    if (empty) {
+        all.remove(key);
     } else {
-        all.insert(source_key(part), source);
+        all.insert(key, value);
     }
     QSaveFile file(sources_file());
     if (file.open(QIODevice::WriteOnly)) {
         file.write(QJsonDocument(all).toJson(QJsonDocument::Compact));
         file.commit();
     }
+}
+
+void record_source(Part part, const QJsonObject& source) { store_source(source_key(part), source); }
+
+// `relative` in the installed client: itself, or when Roblox renamed it the one file
+// beside it whose name starts the same, as the dated login background does.
+QString client_name(const client::Build& build, const QString& relative) {
+    if (QFileInfo::exists(resources(build) + QLatin1Char('/') + relative)) return relative;
+    const QFileInfo wanted(relative);
+    const QDir dir(resources(build) + QLatin1Char('/') + wanted.path());
+    const QStringList matches = dir.entryList({wanted.completeBaseName() + QStringLiteral("*.") + wanted.suffix()},
+                                              QDir::Files);
+    return matches.size() == 1 ? wanted.path() + QLatin1Char('/') + matches.first() : QString();
+}
+
+// The old login screen's files, moved to the names this build of the client uses.
+void follow_renames(const client::Build& build) {
+    QJsonArray files = read_sources().value(kLoginKey).toArray();
+    bool moved = false;
+    for (qsizetype i = 0; i < files.size(); ++i) {
+        QJsonObject file = files.at(i).toObject();
+        const QString to = file.value(QStringLiteral("to")).toString();
+        if (QFileInfo::exists(resources(build) + QLatin1Char('/') + to)) continue;
+        const QString now = client_name(build, file.value(QStringLiteral("from")).toString());
+        if (now.isEmpty()) continue;
+        const QString base = folder(client::Product::Player) + QLatin1Char('/');
+        QDir().mkpath(QFileInfo(base + now).absolutePath());
+        if (!QFile::rename(base + to, base + now)) continue;
+        file.insert(QStringLiteral("to"), now);
+        files.replace(i, file);
+        moved = true;
+    }
+    if (moved) store_source(kLoginKey, files);
 }
 
 bool copy_over(const QString& from, const QString& to) {
@@ -198,6 +240,7 @@ bool apply(const client::Build& build, client::Product product, QString* error) 
     restore(build);
     const QDir customizations(folder(product));
     if (!customizations.exists()) return true;
+    if (product == client::Product::Player) follow_renames(build);
 
     Applier applier(build);
     const QString root = customizations.absolutePath() + QLatin1Char('/');
@@ -333,67 +376,6 @@ void remove(Part part) {
     record_source(part, {});
 }
 
-void download_classic(Part part, const QString& variant, std::function<void(const QString& error)> done) {
-    const PartFiles p = files_of(part);
-    // Each target file and its source in Bloxstrap's Mods folder, as Bloxstrap maps them.
-    QStringList sources;
-    if (part == Part::AvatarBackground) {
-        sources = {QStringLiteral("OldAvatarBackground.rbxl")};
-    } else if (part == Part::CharacterSounds) {
-        sources = {QStringLiteral("Sounds/OldWalk.mp3"), QStringLiteral("Sounds/OldJump.mp3"),
-                   QStringLiteral("Sounds/OldGetUp.mp3"), QStringLiteral("Sounds/Empty.mp3"),
-                   QStringLiteral("Sounds/Empty.mp3"), QStringLiteral("Sounds/Empty.mp3"),
-                   QStringLiteral("Sounds/Empty.mp3")};
-    } else if (part == Part::Cursor) {
-        sources = {QStringLiteral("Cursor/From%1/ArrowCursor.png").arg(variant),
-                   QStringLiteral("Cursor/From%1/ArrowFarCursor.png").arg(variant)};
-    }
-    if (sources.isEmpty()) {
-        done(QStringLiteral("nothing to download for this customization"));
-        return;
-    }
-
-    auto* net = new QNetworkAccessManager();
-    struct Pending {
-        QVector<QByteArray> data;
-        int left;
-        QString error;
-    };
-    auto pending = std::make_shared<Pending>(Pending{QVector<QByteArray>(sources.size()), int(sources.size()), {}});
-    const QString dir = folder(client::Product::Player) + QLatin1Char('/') + p.directory;
-    for (int i = 0; i < sources.size(); ++i) {
-        QNetworkRequest request{QUrl(kBloxstrapMods + sources.at(i))};
-        request.setTransferTimeout(30000);
-        QNetworkReply* reply = net->get(request);
-        QObject::connect(reply, &QNetworkReply::finished, net, [=] {
-            reply->deleteLater();
-            if (reply->error() != QNetworkReply::NoError) {
-                pending->error = QStringLiteral("could not download %1 from Bloxstrap: %2")
-                                     .arg(sources.at(i), reply->errorString());
-            } else {
-                pending->data[i] = reply->readAll();
-            }
-            if (--pending->left > 0) return;
-            net->deleteLater();
-            if (!pending->error.isEmpty()) return done(pending->error);
-            if (part == Part::Cursor) remove(Part::Cursor);
-            // Files the installed client doesn't ship (Bloxstrap targets the Windows one) are left out.
-            const auto build = client::installed(client::Product::Player);
-            for (int k = 0; k < sources.size(); ++k) {
-                const QString relative = p.directory + QLatin1Char('/') + p.files.at(k);
-                if (build && !QFileInfo::exists(resources(*build) + QLatin1Char('/') + relative)) continue;
-                QDir().mkpath(dir);
-                QSaveFile out(dir + QLatin1Char('/') + p.files.at(k));
-                if (!out.open(QIODevice::WriteOnly) || out.write(pending->data[k]) < 0 || !out.commit()) {
-                    return done(QStringLiteral("could not save %1 into the customizations folder").arg(p.files.at(k)));
-                }
-            }
-            record_source(part, {{QStringLiteral("classic"), variant}});
-            done(QString());
-        });
-    }
-}
-
 bool present(Part part) {
     const PartFiles p = files_of(part);
     for (const QString& name : p.files) {
@@ -412,6 +394,11 @@ Applied applied(Part part) {
     if (source.contains(QStringLiteral("file"))) return {source.value(QStringLiteral("file")).toString(), {}};
     if (source.contains(QStringLiteral("colour"))) {
         return {QStringLiteral("Recoloured"), QColor(source.value(QStringLiteral("colour")).toString())};
+    }
+    if (source.contains(QStringLiteral("offer"))) {
+        return {QStringLiteral("%1's %2").arg(source.value(QStringLiteral("source")).toString(),
+                                              source.value(QStringLiteral("offer")).toString()),
+                {}};
     }
     if (source.contains(QStringLiteral("classic"))) {
         const QString variant = source.value(QStringLiteral("classic")).toString();
@@ -434,23 +421,327 @@ QImage image(Part part) {
 }
 
 QString font_file(Part part) {
-    if (part != Part::Font && part != Part::MonoFont) return {};
+    if (part != Part::Font && part != Part::MonoFont && part != Part::Emoji) return {};
     const PartFiles p = files_of(part);
     for (const QString& name : p.files) {
         const QString path = folder(client::Product::Player) + QLatin1Char('/') + p.directory + QLatin1Char('/') + name;
         if (QFileInfo::exists(path)) return path;
     }
-    return {};
+    // Roblox's own text fonts are many files; its emoji is one.
+    if (part != Part::Emoji) return {};
+    const auto build = client::installed(client::Product::Player);
+    if (!build) return {};
+    const QString relative = p.directory + QLatin1Char('/') + p.files.first();
+    const QString original = state_dir(*build) + QStringLiteral("/originals/") + relative;
+    return QFileInfo::exists(original) ? original : resources(*build) + QLatin1Char('/') + relative;
 }
 
-void fetch_classic_cursor(const QString& variant, std::function<void(const QImage& image)> done) {
+namespace {
+
+// One download: its body, or why it failed.
+void get(const QUrl& url, std::function<void(const QByteArray& body, const QString& error)> done) {
     auto* net = new QNetworkAccessManager();
-    QNetworkRequest request{QUrl(kBloxstrapMods + QStringLiteral("Cursor/From%1/ArrowCursor.png").arg(variant))};
+    QNetworkRequest request(url);
     request.setTransferTimeout(30000);
     QNetworkReply* reply = net->get(request);
-    QObject::connect(reply, &QNetworkReply::finished, net, [net, reply, done] {
+    QObject::connect(reply, &QNetworkReply::finished, net, [net, reply, url, done] {
         net->deleteLater();
-        done(reply->error() == QNetworkReply::NoError ? QImage::fromData(reply->readAll()) : QImage());
+        if (reply->error() != QNetworkReply::NoError) {
+            done({}, QStringLiteral("could not download %1: %2").arg(url.fileName(), reply->errorString()));
+            return;
+        }
+        done(reply->readAll(), QString());
+    });
+}
+
+// Several downloads, answered once every one has.
+void get_all(const QList<QUrl>& urls,
+             std::function<void(const QList<QByteArray>& bodies, const QString& error)> done) {
+    struct Pending {
+        QList<QByteArray> bodies;
+        qsizetype left;
+        QString error;
+    };
+    auto pending = std::make_shared<Pending>(Pending{QList<QByteArray>(urls.size()), urls.size(), {}});
+    if (urls.isEmpty()) return done({}, QString());
+    for (qsizetype i = 0; i < urls.size(); ++i) {
+        get(urls.at(i), [pending, i, done](const QByteArray& body, const QString& error) {
+            if (!error.isEmpty()) pending->error = error;
+            pending->bodies[i] = body;
+            if (--pending->left == 0) done(pending->bodies, pending->error);
+        });
+    }
+}
+
+// A bootstrapper's GitHub repository and where in it its bundled mods are.
+struct Repository {
+    QString name;
+    QString path;
+    QString mods;
+};
+
+const QList<Repository>& repositories() {
+    static const QList<Repository> all = {
+        {QStringLiteral("Bloxstrap"), QStringLiteral("bloxstraplabs/bloxstrap"), QStringLiteral("Bloxstrap/Resources/Mods/")},
+        {QStringLiteral("Froststrap"), QStringLiteral("Froststrap/Froststrap"), QStringLiteral("Froststrap/Resources/Mods/")},
+        {QStringLiteral("Voidstrap"), QStringLiteral("KloBraticc/Voidstrap"),
+         QStringLiteral("src/Voidstrap.App/Resources/Mods/")},
+    };
+    return all;
+}
+
+QUrl raw(const Repository& repository, const QString& path) {
+    return QUrl(QStringLiteral("https://raw.githubusercontent.com/%1/HEAD/%2").arg(repository.path, path));
+}
+
+// Froststrap's catalogue of community mods.
+const QUrl kFroststrapCatalogue(QStringLiteral("https://raw.githubusercontent.com/Froststrap/config/HEAD/Data.json"));
+// Froststrap's own numbers for the kinds of community mod.
+constexpr int kFroststrapAvatarEditor = 4;
+const QString kFroststrapOldLogin = QStringLiteral("old-login-screen");
+
+// The release Bloxstrap's emoji fonts come from.
+const QUrl kEmojiFonts(QStringLiteral("https://api.github.com/repos/bloxstraplabs/rbxcustom-fontemojis/releases/latest"));
+
+// "BibataModernIce" -> "Bibata Modern Ice"; "From2006" -> "2006".
+QString folder_title(QString name) {
+    if (name.startsWith(QLatin1String("From"))) name = name.mid(4);
+    static const QRegularExpression boundary(QStringLiteral("(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])"));
+    return name.replace(boundary, QStringLiteral(" "));
+}
+
+// Every cursor folder with both arrows, the first repository's copy of each name.
+void fetch_cursors(std::function<void(const QList<Offer>&, const QString&)> done) {
+    QList<QUrl> trees;
+    for (const Repository& repository : repositories()) {
+        trees << QUrl(QStringLiteral("https://api.github.com/repos/%1/git/trees/HEAD?recursive=1").arg(repository.path));
+    }
+    get_all(trees, [done](const QList<QByteArray>& bodies, const QString& error) {
+        QList<Offer> offers;
+        QStringList seen;
+        const QString target = files_of(Part::Cursor).directory + QLatin1Char('/');
+        for (qsizetype r = 0; r < bodies.size(); ++r) {
+            const Repository& repository = repositories().at(r);
+            QSet<QString> paths;
+            for (const QJsonValue entry : QJsonDocument::fromJson(bodies.at(r)).object().value(QStringLiteral("tree")).toArray()) {
+                paths.insert(entry.toObject().value(QStringLiteral("path")).toString());
+            }
+            const QString cursors = repository.mods + QStringLiteral("Cursor/");
+            QStringList folders;
+            for (const QString& path : paths) {
+                if (!path.startsWith(cursors) || !path.endsWith(QLatin1String("/ArrowCursor.png"))) continue;
+                const QString name = path.mid(cursors.size()).section(QLatin1Char('/'), 0, 0);
+                if (paths.contains(cursors + name + QStringLiteral("/ArrowFarCursor.png"))) folders << name;
+            }
+            folders.sort();
+            for (const QString& name : folders) {
+                if (seen.contains(name)) continue;
+                seen << name;
+                const QString base = cursors + name + QLatin1Char('/');
+                offers << Offer{folder_title(name), repository.name, raw(repository, base + QStringLiteral("ArrowCursor.png")),
+                                {{target + QStringLiteral("ArrowCursor.png"), raw(repository, base + QStringLiteral("ArrowCursor.png"))},
+                                 {target + QStringLiteral("ArrowFarCursor.png"),
+                                  raw(repository, base + QStringLiteral("ArrowFarCursor.png"))}},
+                                {}};
+            }
+        }
+        done(offers, offers.isEmpty() ? error : QString());
+    });
+}
+
+// Froststrap's community mods, each as {"id", "name", "download", "thumbnail", "modtype"}.
+void fetch_catalogue(std::function<void(const QJsonArray& mods, const QString& error)> done) {
+    get(kFroststrapCatalogue, [done](const QByteArray& body, const QString& error) {
+        done(QJsonDocument::fromJson(body).object().value(QStringLiteral("communityMods")).toArray(), error);
+    });
+}
+
+void fetch_avatar_backgrounds(std::function<void(const QList<Offer>&, const QString&)> done) {
+    const Repository& bloxstrap = repositories().first();
+    const QString target = files_of(Part::AvatarBackground).directory + QLatin1Char('/') +
+                           files_of(Part::AvatarBackground).files.first();
+    QList<Offer> offers = {{QStringLiteral("Classic"), bloxstrap.name, {},
+                            {{target, raw(bloxstrap, bloxstrap.mods + QStringLiteral("OldAvatarBackground.rbxl"))}}, {}}};
+    fetch_catalogue([offers, done](const QJsonArray& mods, const QString& error) mutable {
+        for (const QJsonValue value : mods) {
+            const QJsonObject mod = value.toObject();
+            if (mod.value(QStringLiteral("modtype")).toInt() != kFroststrapAvatarEditor) continue;
+            offers << Offer{mod.value(QStringLiteral("name")).toString(), QStringLiteral("Froststrap"),
+                            QUrl(mod.value(QStringLiteral("thumbnail")).toString()), {},
+                            QUrl(mod.value(QStringLiteral("download")).toString())};
+        }
+        done(offers, mods.isEmpty() ? error : QString());
+    });
+}
+
+QList<Offer> character_sounds() {
+    const Repository& bloxstrap = repositories().first();
+    const PartFiles p = files_of(Part::CharacterSounds);
+    // Bloxstrap's sounds for each of the part's files, in order.
+    const QStringList sounds = {QStringLiteral("OldWalk"), QStringLiteral("OldJump"), QStringLiteral("OldGetUp"),
+                                QStringLiteral("Empty"),   QStringLiteral("Empty"),   QStringLiteral("Empty"),
+                                QStringLiteral("Empty")};
+    Offer classic{QStringLiteral("Classic"), bloxstrap.name, {}, {}, {}};
+    for (qsizetype i = 0; i < p.files.size(); ++i) {
+        classic.files << qMakePair(p.directory + QLatin1Char('/') + p.files.at(i),
+                                   raw(bloxstrap, bloxstrap.mods + QStringLiteral("Sounds/%1.mp3").arg(sounds.at(i))));
+    }
+    return {classic};
+}
+
+// Bloxstrap's names for the fonts in its emoji release.
+QString emoji_title(const QString& file) {
+    static const QMap<QString, QString> titles = {
+        {QStringLiteral("Win1122H2SegoeUIEmoji.ttf"), QStringLiteral("Windows 11")},
+        {QStringLiteral("Win10April2018SegoeUIEmoji.ttf"), QStringLiteral("Windows 10")},
+        {QStringLiteral("Win8.1SegoeUIEmoji.ttf"), QStringLiteral("Windows 8.1")},
+    };
+    return titles.value(file, QFileInfo(file).completeBaseName());
+}
+
+void fetch_emoji(std::function<void(const QList<Offer>&, const QString&)> done) {
+    get(kEmojiFonts, [done](const QByteArray& body, const QString& error) {
+        const QString target = files_of(Part::Emoji).directory + QLatin1Char('/') + files_of(Part::Emoji).files.first();
+        QList<Offer> offers;
+        for (const QJsonValue value : QJsonDocument::fromJson(body).object().value(QStringLiteral("assets")).toArray()) {
+            const QJsonObject asset = value.toObject();
+            const QString name = asset.value(QStringLiteral("name")).toString();
+            if (!name.endsWith(QLatin1String(".ttf"), Qt::CaseInsensitive)) continue;
+            offers << Offer{emoji_title(name), QStringLiteral("Bloxstrap"), {},
+                            {{target, QUrl(asset.value(QStringLiteral("browser_download_url")).toString())}}, {}};
+        }
+        done(offers, offers.isEmpty() ? error : QString());
+    });
+}
+
+// `archive` unpacked into a fresh temporary folder, or why it could not be.
+std::unique_ptr<QTemporaryDir> unpack(const QByteArray& archive, QString* error) {
+    auto dir = std::make_unique<QTemporaryDir>();
+    QFile zip(dir->filePath(QStringLiteral("download.zip")));
+    if (!dir->isValid() || !zip.open(QIODevice::WriteOnly) || zip.write(archive) != archive.size()) {
+        *error = QStringLiteral("could not keep the download");
+        return {};
+    }
+    zip.close();
+    if (!client::extract_zip(zip.fileName(), dir->filePath(QStringLiteral("files")), error)) return {};
+    return dir;
+}
+
+}  // namespace
+
+void fetch_offers(Part part, std::function<void(const QList<Offer>& offers, const QString& error)> done) {
+    switch (part) {
+        case Part::Cursor:
+            return fetch_cursors(done);
+        case Part::AvatarBackground:
+            return fetch_avatar_backgrounds(done);
+        case Part::CharacterSounds:
+            return done(character_sounds(), QString());
+        case Part::Emoji:
+            return fetch_emoji(done);
+        default:
+            return done({}, QString());
+    }
+}
+
+void install(Part part, const Offer& offer, std::function<void(const QString& error)> done) {
+    const QJsonObject source{{QStringLiteral("offer"), offer.name}, {QStringLiteral("source"), offer.source}};
+    const QString dir = folder(client::Product::Player) + QLatin1Char('/');
+    if (!offer.archive.isEmpty()) {
+        get(offer.archive, [part, source, dir, done](const QByteArray& body, const QString& failed) {
+            if (!failed.isEmpty()) return done(failed);
+            QString error;
+            const auto unpacked = unpack(body, &error);
+            if (!unpacked) return done(error);
+            // Only the part's own files: anything else in the archive is another customization.
+            const PartFiles p = files_of(part);
+            remove(part);
+            bool any = false;
+            for (const QString& name : p.files) {
+                const QString relative = p.directory + QLatin1Char('/') + name;
+                const QString from = unpacked->filePath(QStringLiteral("files/") + relative);
+                if (!QFileInfo::exists(from)) continue;
+                if (!copy_over(from, dir + relative)) return done(QStringLiteral("could not save %1").arg(name));
+                any = true;
+            }
+            if (!any) return done(QStringLiteral("the download has nothing for this customization"));
+            record_source(part, source);
+            done(QString());
+        });
+        return;
+    }
+    QList<QUrl> urls;
+    for (const auto& [_, url] : offer.files) urls << url;
+    get_all(urls, [part, offer, source, dir, done](const QList<QByteArray>& bodies, const QString& error) {
+        if (!error.isEmpty()) return done(error);
+        remove(part);
+        // Files the installed client doesn't ship (Bloxstrap targets the Windows one) are left out.
+        const auto build = client::installed(client::Product::Player);
+        for (qsizetype i = 0; i < offer.files.size(); ++i) {
+            const QString relative = offer.files.at(i).first;
+            if (build && !QFileInfo::exists(resources(*build) + QLatin1Char('/') + relative)) continue;
+            QDir().mkpath(QFileInfo(dir + relative).absolutePath());
+            QSaveFile out(dir + relative);
+            if (!out.open(QIODevice::WriteOnly) || out.write(bodies.at(i)) < 0 || !out.commit()) {
+                return done(QStringLiteral("could not save %1 into the customizations folder").arg(QFileInfo(relative).fileName()));
+            }
+        }
+        record_source(part, source);
+        done(QString());
+    });
+}
+
+void fetch_image(const QUrl& url, std::function<void(const QImage& image)> done) {
+    get(url, [done](const QByteArray& body, const QString& error) { done(error.isEmpty() ? QImage::fromData(body) : QImage()); });
+}
+
+bool old_login_screen() {
+    const QJsonArray files = read_sources().value(kLoginKey).toArray();
+    for (const QJsonValue file : files) {
+        if (!QFileInfo::exists(folder(client::Product::Player) + QLatin1Char('/') +
+                               file.toObject().value(QStringLiteral("to")).toString())) {
+            return false;
+        }
+    }
+    return !files.isEmpty();
+}
+
+void set_old_login_screen(bool on, std::function<void(const QString& error)> done) {
+    const QString dir = folder(client::Product::Player) + QLatin1Char('/');
+    for (const QJsonValue file : read_sources().value(kLoginKey).toArray()) {
+        QFile::remove(dir + file.toObject().value(QStringLiteral("to")).toString());
+    }
+    store_source(kLoginKey, QJsonValue());
+    if (!on) return done(QString());
+    // The archive's names are the Windows client's; they're matched to this one's.
+    const auto build = client::installed(client::Product::Player);
+    if (!build) return done(QStringLiteral("Roblox is not installed yet; open it once first."));
+    fetch_catalogue([build = *build, dir, done](const QJsonArray& mods, const QString& error) {
+        QUrl archive;
+        for (const QJsonValue value : mods) {
+            if (value.toObject().value(QStringLiteral("id")).toString() == kFroststrapOldLogin) {
+                archive = QUrl(value.toObject().value(QStringLiteral("download")).toString());
+            }
+        }
+        if (archive.isEmpty()) return done(error.isEmpty() ? QStringLiteral("Froststrap no longer offers it") : error);
+        get(archive, [build, dir, done](const QByteArray& body, const QString& failed) {
+            if (!failed.isEmpty()) return done(failed);
+            QString unpack_error;
+            const auto unpacked = unpack(body, &unpack_error);
+            if (!unpacked) return done(unpack_error);
+            const QString root = unpacked->filePath(QStringLiteral("files")) + QLatin1Char('/');
+            QJsonArray files;
+            QDirIterator it(root, QDir::Files, QDirIterator::Subdirectories);
+            while (it.hasNext()) {
+                const QString from = it.next().mid(root.size());
+                const QString to = client_name(build, from);
+                if (to.isEmpty() || !copy_over(root + from, dir + to)) continue;
+                files << QJsonObject{{QStringLiteral("from"), from}, {QStringLiteral("to"), to}};
+            }
+            if (files.isEmpty()) return done(QStringLiteral("none of its files are in this client"));
+            store_source(kLoginKey, files);
+            done(QString());
+        });
     });
 }
 

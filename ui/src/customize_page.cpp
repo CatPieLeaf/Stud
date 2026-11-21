@@ -4,6 +4,7 @@
 #include "mono_icon.h"
 #include "open_location.h"
 
+#include <QCheckBox>
 #include <QColorDialog>
 #include <QDir>
 #include <QFileDialog>
@@ -31,8 +32,8 @@ struct Spec {
     const char* name;
     const char* filter;  // nullptr when there is no file to choose
     bool colour;
-    // Bloxstrap's classic versions: "" for one, or each variant of it.
-    QStringList classic;
+    // Whether other bootstrappers offer looks for it.
+    bool offers;
     // For parts without a picture of their own.
     const char* icon;
     QStyle::StandardPixmap fallback;
@@ -46,33 +47,27 @@ struct Group {
 const std::vector<Group>& groups() {
     static const std::vector<Group> all = {
         {"Pointer",
-         {{Part::Cursor, "Cursor", "Images (*.png)", true, {"2006", "2013"}, nullptr, QStyle::SP_ArrowUp},
-          {Part::ShiftLock, "Shift lock", "Images (*.png)", true, {}, nullptr, QStyle::SP_ArrowUp}}},
+         {{Part::Cursor, "Cursor", "Images (*.png)", true, true, nullptr, QStyle::SP_ArrowUp},
+          {Part::ShiftLock, "Shift lock", "Images (*.png)", true, false, nullptr, QStyle::SP_ArrowUp}}},
         {"Interface",
-         {{Part::EmoteWheel, "Emote wheel", nullptr, true, {}, nullptr, QStyle::SP_DesktopIcon},
-          {Part::Font, "Game font", "Fonts (*.ttf *.otf)", false, {}, nullptr, QStyle::SP_FileIcon},
-          {Part::MonoFont, "Code font", "Fonts (*.ttf *.otf)", false, {}, nullptr, QStyle::SP_FileIcon}}},
+         {{Part::EmoteWheel, "Emote wheel", nullptr, true, false, nullptr, QStyle::SP_DesktopIcon},
+          {Part::Font, "Game font", "Fonts (*.ttf *.otf)", false, false, nullptr, QStyle::SP_FileIcon},
+          {Part::MonoFont, "Code font", "Fonts (*.ttf *.otf)", false, false, nullptr, QStyle::SP_FileIcon},
+          {Part::Emoji, "Emoji", "Fonts (*.ttf)", false, true, nullptr, QStyle::SP_FileIcon}}},
         {"Sounds",
-         {{Part::DeathSound, "Death sound", "Sounds (*.ogg)", false, {}, "audio-x-generic", QStyle::SP_MediaVolume},
-          {Part::CharacterSounds, "Character sounds", nullptr, false, {""}, "audio-x-generic",
-           QStyle::SP_MediaVolume}}},
+         {{Part::DeathSound, "Death sound", "Sounds (*.ogg)", false, false, "audio-x-generic", QStyle::SP_MediaVolume},
+          {Part::CharacterSounds, "Character sounds", nullptr, false, true, "audio-x-generic", QStyle::SP_MediaVolume}}},
         {"Avatar",
-         {{Part::AvatarBackground, "Avatar background", nullptr, false, {""}, "preferences-desktop-wallpaper",
+         {{Part::AvatarBackground, "Avatar background", nullptr, false, true, "preferences-desktop-wallpaper",
            QStyle::SP_DesktopIcon}}},
     };
     return all;
 }
 
-// Classic cursors fetched for their menu, kept only while Stud runs.
-QHash<QString, QIcon>& classic_previews() {
-    static QHash<QString, QIcon> previews;
+// Offer pictures fetched for the menus, kept only while Stud runs.
+QHash<QUrl, QIcon>& offer_previews() {
+    static QHash<QUrl, QIcon> previews;
     return previews;
-}
-
-QString classic_label(const Spec& spec, const QString& variant) {
-    const QString name = QString::fromLatin1(spec.name).toLower();
-    if (!variant.isEmpty()) return QStringLiteral("Bloxstrap's %1 %2").arg(variant, name);
-    return QStringLiteral("Bloxstrap's classic %1").arg(name);
 }
 
 // Only the drawn part: Roblox's cursors sit in a mostly empty square, so scaling the
@@ -87,6 +82,20 @@ QImage visible_part(const QImage& image) {
         }
     }
     return drawn.isEmpty() ? image : image.copy(drawn);
+}
+
+// A line of an error, in the card or group it belongs to.
+QLabel* error_label(QWidget* parent) {
+    auto* error = new QLabel(parent);
+    error->setWordWrap(true);
+    error->setStyleSheet(QStringLiteral("color:#d62f2f;"));
+    error->hide();
+    return error;
+}
+
+void show_error(QLabel* label, const QString& error) {
+    label->setText(error);
+    label->setVisible(!error.isEmpty());
 }
 
 // One part: its preview, what it has now, and what can change it.
@@ -123,10 +132,7 @@ public:
         state_->setPalette(muted);
         applied->addWidget(state_, 1);
         text->addLayout(applied);
-        error_ = new QLabel(this);
-        error_->setWordWrap(true);
-        error_->setStyleSheet(QStringLiteral("color:#d62f2f;"));
-        error_->hide();
+        error_ = error_label(this);
         text->addWidget(error_);
         row->addLayout(text, 1);
 
@@ -165,6 +171,7 @@ public:
 private:
     QMenu* menu() {
         auto* menu = new QMenu(this);
+        menu->setToolTipsVisible(true);
         if (spec_.filter != nullptr) {
             menu->addAction(mono_icon("document-open", QStyle::SP_DialogOpenButton), QStringLiteral("Choose file..."),
                             this, [this] {
@@ -185,42 +192,62 @@ private:
                 finished(customization::recolour(spec_.part, picked, &error) ? QString() : error);
             });
         }
-        if (!spec_.classic.isEmpty()) {
-            if (!menu->isEmpty()) menu->addSeparator();
-            for (const QString& variant : spec_.classic) {
-                QAction* action = menu->addAction(classic_label(spec_, variant), this, [this, variant] { download(variant); });
-                action->setToolTip(QStringLiteral("Downloads it from Bloxstrap's GitHub repository."));
-                if (spec_.part == Part::Cursor) classic_actions_.insert(variant, action);
-            }
-            menu->setToolTipsVisible(true);
-            connect(menu, &QMenu::aboutToShow, this, [this] { show_classic_previews(); });
+        if (spec_.offers) {
+            looking_ = menu->addAction(QStringLiteral("Looking for more in other bootstrappers..."));
+            looking_->setEnabled(false);
+            connect(menu, &QMenu::aboutToShow, this, [this, menu] { load_offers(menu); });
         }
         return menu;
     }
 
-    // The classic cursors only exist on Bloxstrap's side until one is chosen.
-    void show_classic_previews() {
-        for (auto it = classic_actions_.cbegin(); it != classic_actions_.cend(); ++it) {
-            const QString variant = it.key();
-            QPointer<QAction> action = it.value();
-            if (classic_previews().contains(variant)) {
-                action->setIcon(classic_previews().value(variant));
-                continue;
+    // What the other bootstrappers have, the first time the menu opens.
+    void load_offers(QMenu* menu) {
+        if (offers_asked_) return;
+        offers_asked_ = true;
+        QPointer<Card> self = this;
+        QPointer<QMenu> guard = menu;
+        customization::fetch_offers(spec_.part, [self, guard](const QList<customization::Offer>& offers,
+                                                              const QString& error) {
+            if (!self || !guard) return;
+            if (offers.isEmpty()) {
+                self->looking_->setText(error.isEmpty() ? QStringLiteral("Nothing more from other bootstrappers")
+                                                        : QStringLiteral("Couldn't reach them: %1").arg(error));
+                // Asked again at the next opening, in case the network is back.
+                self->offers_asked_ = false;
+                return;
             }
-            customization::fetch_classic_cursor(variant, [variant, action](const QImage& image) {
-                if (image.isNull()) return;
-                const QIcon icon(QPixmap::fromImage(visible_part(image)));
-                classic_previews().insert(variant, icon);
-                if (action) action->setIcon(icon);
-            });
-        }
+            guard->removeAction(self->looking_);
+            QString section;
+            for (const customization::Offer& offer : offers) {
+                if (offer.source != section) {
+                    section = offer.source;
+                    guard->addSection(QStringLiteral("From %1").arg(section));
+                }
+                QAction* action = guard->addAction(offer.name, self, [self, offer] { self->install(offer); });
+                if (offer.preview.isValid()) self->show_preview(action, offer.preview);
+            }
+        });
     }
 
-    void download(const QString& variant) {
+    void show_preview(QAction* action, const QUrl& url) {
+        if (offer_previews().contains(url)) {
+            action->setIcon(offer_previews().value(url));
+            return;
+        }
+        QPointer<QAction> guard = action;
+        customization::fetch_image(url, [url, guard](const QImage& image) {
+            if (image.isNull()) return;
+            const QIcon icon(QPixmap::fromImage(visible_part(image)));
+            offer_previews().insert(url, icon);
+            if (guard) guard->setIcon(icon);
+        });
+    }
+
+    void install(const customization::Offer& offer) {
         busy_ = true;
-        state_->setText(QStringLiteral("Downloading from Bloxstrap..."));
+        state_->setText(QStringLiteral("Downloading from %1...").arg(offer.source));
         QPointer<Card> self = this;
-        customization::download_classic(spec_.part, variant, [self](const QString& error) {
+        customization::install(spec_.part, offer, [self](const QString& error) {
             if (!self) return;
             self->busy_ = false;
             self->finished(error);
@@ -228,14 +255,13 @@ private:
     }
 
     void finished(const QString& error) {
-        error_->setText(error);
-        error_->setVisible(!error.isEmpty());
+        show_error(error_, error);
         refresh();
     }
 
     void draw_preview() {
         const QSize box = preview_->size();
-        if (spec_.part == Part::Font || spec_.part == Part::MonoFont) {
+        if (spec_.part == Part::Font || spec_.part == Part::MonoFont || spec_.part == Part::Emoji) {
             if (font_id_ >= 0) QFontDatabase::removeApplicationFont(font_id_);
             font_id_ = -1;
             QFont sample = spec_.part == Part::MonoFont ? QFontDatabase::systemFont(QFontDatabase::FixedFont) : font();
@@ -248,7 +274,7 @@ private:
             sample.setPixelSize(box.height());
             sample.setPixelSize(box.height() * box.height() / QFontMetrics(sample).height());
             preview_->setFont(sample);
-            preview_->setText(QStringLiteral("Aa"));
+            preview_->setText(spec_.part == Part::Emoji ? QStringLiteral("😀") : QStringLiteral("Aa"));
             return;
         }
         const QImage picture = customization::image(spec_.part);
@@ -265,7 +291,8 @@ private:
     QLabel* state_;
     QLabel* error_;
     QToolButton* reset_;
-    QHash<QString, QAction*> classic_actions_;
+    QAction* looking_ = nullptr;
+    bool offers_asked_ = false;
     int font_id_ = -1;
     bool busy_ = false;
 };
@@ -290,6 +317,31 @@ CustomizePage::CustomizePage(std::function<void()> import, QWidget* parent) : QW
         }
         page->addWidget(box);
     }
+
+    auto* experiments = new QGroupBox(QStringLiteral("Experiments"), this);
+    auto* tries = new QVBoxLayout(experiments);
+    auto* oldLogin = new QCheckBox(QStringLiteral("Old login screen, from Froststrap"), experiments);
+    oldLogin->setToolTip(QStringLiteral("The login background and logo Roblox had before."));
+    tries->addWidget(oldLogin);
+    QLabel* loginError = error_label(experiments);
+    tries->addWidget(loginError);
+    connect(oldLogin, &QCheckBox::toggled, this, [oldLogin, loginError](bool on) {
+        oldLogin->setEnabled(false);
+        QPointer<QCheckBox> guard = oldLogin;
+        customization::set_old_login_screen(on, [guard, loginError](const QString& error) {
+            if (!guard) return;
+            guard->setEnabled(true);
+            show_error(loginError, error);
+            const QSignalBlocker quiet(guard);
+            guard->setChecked(customization::old_login_screen());
+        });
+    });
+    refreshers_.push_back([oldLogin] {
+        if (!oldLogin->isEnabled()) return;
+        const QSignalBlocker quiet(oldLogin);
+        oldLogin->setChecked(customization::old_login_screen());
+    });
+    page->addWidget(experiments);
 
     auto* actions = new QHBoxLayout();
     auto* importOther = new QPushButton(QStringLiteral("Import from Bloxstrap, Fishstrap or Froststrap..."), this);
