@@ -21,6 +21,13 @@ add-extensions:
     add-ld-path: .
     autodownload: true
     autodelete: false
+  org.freedesktop.Platform.VulkanLayer:
+    directory: lib/extensions/vulkan
+    subdirectories: true
+    version: '25.08'
+    add-ld-path: lib
+    merge-dirs: share/vulkan/implicit_layer.d;share/vulkan/explicit_layer.d
+    no-autodownload: true
 
 modules:
   - name: sdl3
@@ -144,7 +151,7 @@ modules:
       - mkdir -p /app/share/licenses/io.github.catpieleaf.Stud
       - cp -a /app/share/licenses/stud/. /app/share/licenses/io.github.catpieleaf.Stud/
       - rm -rf /app/share/licenses/stud
-      - mkdir -p /app/lib/ffmpeg
+      - mkdir -p /app/lib/ffmpeg /app/lib/extensions/vulkan
     cleanup:
       - /share/man
       - /share/doc

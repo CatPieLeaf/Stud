@@ -637,6 +637,43 @@ void open_settings_for_launch_failure(const QString& reason) {
     stud::ui::SettingsWindow::showSingleton(reason);
 }
 
+// Where the Flatpak mounts its Vulkan layer extensions (Flathub ships gamescope as
+// one); their programs are in each one's bin, which Flatpak doesn't put on PATH.
+const QString kFlatpakVulkanLayers = QStringLiteral("/app/lib/extensions/vulkan");
+
+// A launch wrapper's program as a path; empty when it isn't installed.
+QString wrapper_program(const QString& name) {
+    if (const QString found = QStandardPaths::findExecutable(name); !found.isEmpty()) return found;
+    QStringList bins;
+    for (const QFileInfo& layer : QDir(kFlatpakVulkanLayers).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        bins << layer.filePath() + QStringLiteral("/bin");
+    }
+    return bins.isEmpty() ? QString() : QStandardPaths::findExecutable(name, bins);
+}
+
+// Why the wrapper `name` can't run, and inside the Flatpak how it would get there.
+QString missing_wrapper(const QString& name) {
+    const QString reason = QStringLiteral("The launch wrapper %1 isn't installed.").arg(name);
+    if (!QFileInfo::exists(QStringLiteral("/.flatpak-info"))) return reason;
+    // The extension branch Stud was built against, from flatpak-builder's copy of the manifest.
+    QFile manifest(QStringLiteral("/app/manifest.json"));
+    const QString branch =
+        manifest.open(QIODevice::ReadOnly)
+            ? QJsonDocument::fromJson(manifest.readAll())
+                  .object()
+                  .value(QStringLiteral("add-extensions"))
+                  .toObject()
+                  .value(QStringLiteral("org.freedesktop.Platform.VulkanLayer"))
+                  .toObject()
+                  .value(QStringLiteral("version"))
+                  .toString()
+            : QString();
+    return reason + QStringLiteral(" In the Flatpak it has to come from Flathub as a Vulkan layer extension, "
+                                   "when there is one: flatpak install flathub "
+                                   "org.freedesktop.Platform.VulkanLayer.%1%2")
+                        .arg(QFileInfo(name).fileName(), branch.isEmpty() ? QString() : QStringLiteral("//") + branch);
+}
+
 std::vector<pid_t> client_process_ids();
 
 // Hands `link` to the running client, as macOS would. False when none is running.
@@ -822,6 +859,16 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
         args << *deep_link;
     }
 
+    QStringList wrapper = QProcess::splitCommand(QString::fromStdString(settings.launch_wrapper));
+    if (!wrapper.isEmpty()) {
+        const QString found = wrapper_program(wrapper.first());
+        if (found.isEmpty()) {
+            open_settings_for_launch_failure(missing_wrapper(wrapper.first()));
+            return false;
+        }
+        wrapper.first() = found;
+    }
+
     stud::ui::GameActivity::Options activity;
     activity.discord = settings.discord_rich_presence;
     activity.join_button = settings.discord_join_button;
@@ -839,7 +886,6 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     QObject::connect(g_activity, &stud::ui::GameActivity::leftGame, qApp,
                      [] { stud::ui::terminate_stud_session(); }, Qt::QueuedConnection);
     g_client = new QProcess(qApp);
-    QStringList wrapper = QProcess::splitCommand(QString::fromStdString(settings.launch_wrapper));
     if (wrapper.isEmpty()) {
         g_client->setProgram(rosemary);
         g_client->setArguments(args);
