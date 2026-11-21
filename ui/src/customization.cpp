@@ -411,7 +411,9 @@ Applied applied(Part part) {
 QImage image(Part part) {
     const PartFiles p = files_of(part);
     if (p.files.isEmpty() || !p.files.first().endsWith(QLatin1String(".png"))) return {};
-    const QString relative = p.directory + QLatin1Char('/') + p.files.first();
+    // ArrowCursor is the hand over clickable things; ArrowFarCursor is the arrow itself.
+    const QString shown = part == Part::Cursor ? QStringLiteral("ArrowFarCursor.png") : p.files.first();
+    const QString relative = p.directory + QLatin1Char('/') + shown;
     const QString custom = folder(client::Product::Player) + QLatin1Char('/') + relative;
     if (QFileInfo::exists(custom)) return QImage(custom);
     const auto build = client::installed(client::Product::Player);
@@ -538,7 +540,7 @@ void fetch_cursors(std::function<void(const QList<Offer>&, const QString&)> done
                 if (seen.contains(name)) continue;
                 seen << name;
                 const QString base = cursors + name + QLatin1Char('/');
-                offers << Offer{folder_title(name), repository.name, raw(repository, base + QStringLiteral("ArrowCursor.png")),
+                offers << Offer{folder_title(name), repository.name, raw(repository, base + QStringLiteral("ArrowFarCursor.png")),
                                 {{target + QStringLiteral("ArrowCursor.png"), raw(repository, base + QStringLiteral("ArrowCursor.png"))},
                                  {target + QStringLiteral("ArrowFarCursor.png"),
                                   raw(repository, base + QStringLiteral("ArrowFarCursor.png"))}},

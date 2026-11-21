@@ -278,10 +278,15 @@ private:
             return;
         }
         const QImage picture = customization::image(spec_.part);
-        const QPixmap pixmap = picture.isNull()
-                                   ? mono_icon(spec_.icon != nullptr ? spec_.icon : "", spec_.fallback).pixmap(box)
-                                   : QPixmap::fromImage(visible_part(picture))
-                                         .scaled(box, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        if (picture.isNull()) {
+            preview_->setPixmap(mono_icon(spec_.icon != nullptr ? spec_.icon : "", spec_.fallback).pixmap(box));
+            return;
+        }
+        // In the screen's own pixels, so a HiDPI preview isn't a stretched low-resolution one.
+        const qreal ratio = devicePixelRatioF();
+        QPixmap pixmap = QPixmap::fromImage(visible_part(picture))
+                             .scaled(box * ratio, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        pixmap.setDevicePixelRatio(ratio);
         preview_->setPixmap(pixmap);
     }
 
