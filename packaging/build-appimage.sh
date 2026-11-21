@@ -76,6 +76,22 @@ curl -fsSL "https://ffmpeg.org/releases/ffmpeg-$ffmpeg_version.tar.xz" | tar -xJ
     make install
 ) >&2 || die "FFmpeg $ffmpeg_version did not build"
 
+# Arch's libavif links three AV1 encoders WPE WebKit never uses: the same version,
+# built as Arch builds it but decoding with dav1d alone, replaces it.
+avif_version="$(pacman -Q libavif | awk '{print $2}' | sed 's/^[0-9]*://; s/-[^-]*$//')"
+say "rebuilding libavif $avif_version without encoders"
+rm -rf "$work/libavif-$avif_version"
+curl -fsSL "https://github.com/AOMediaCodec/libavif/archive/refs/tags/v$avif_version.tar.gz" | tar -xz -C "$work" ||
+    die "libavif has no v$avif_version source"
+(
+    cmake -S "$work/libavif-$avif_version" -B "$work/libavif-$avif_version/build" -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib \
+        -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_CODEC_AOM=OFF -DAVIF_CODEC_RAV1E=OFF -DAVIF_CODEC_SVT=OFF \
+        -DAVIF_LIBSHARPYUV=SYSTEM -DAVIF_LIBXML2=SYSTEM -DAVIF_BUILD_GDK_PIXBUF=OFF
+    cmake --build "$work/libavif-$avif_version/build"
+    cmake --install "$work/libavif-$avif_version/build"
+) >&2 || die "libavif $avif_version did not build"
+
 tools="$work/tools"
 mkdir -p "$tools"
 fetch_tool() {
@@ -194,13 +210,32 @@ PY
 }
 
 # Unused here: Qt's translations (only of Qt's own dialogs; Stud is in English),
-# and the QML modules (with Quick Controls, Kirigami and Qt Labs) and PDF support a
-# widget application never loads.
+# the QML modules (with Quick Controls, Kirigami and Qt Labs) and PDF support a
+# widget application never loads, Qt's Wayland compositor (Stud is only a client),
+# GStreamer's developer tools, and the WebRTC plugins with what only they link:
+# Roblox's pages make no calls, and voice chat runs in the client.
 before="$(unmet | sort)"
 find "$appdir" -name '*.qm' -delete
-find "$appdir" -type d -path '*/qt6/qml' -prune -exec rm -rf {} +
+find "$appdir" -type d \( -path '*/qt6/qml' -o -path '*/plugins/wayland-graphics-integration-server' \) \
+    -prune -exec rm -rf {} +
 find "$appdir" \( -name 'libQt6QuickControls2*' -o -name 'libQt6QuickDialogs2*' -o -name 'libQt6QuickTemplates2*' \
-    -o -name 'libQt6Labs*' -o -name 'libKirigami*' -o -name 'libQt6Pdf*' -o -name 'libqpdf.so' \) -delete
+    -o -name 'libQt6Labs*' -o -name 'libKirigami*' -o -name 'libQt6Pdf*' -o -name 'libqpdf.so' \
+    -o -name 'libQt6WaylandCompositor*' -o -name 'libQt6WaylandEglCompositor*' \
+    -o -name 'gst-hotdoc-plugins-scanner' -o -name 'gst-completion-helper' \
+    -o -name 'libgstnice.so' -o -name 'libgstwebrtc.so' -o -name 'libgstdtls.so' -o -name 'libgstsrtp.so' \
+    -o -name 'libgstsctp.so' \) -delete
+# What only the files above linked, once nothing left in the bundle needs it.
+for orphan in libnice libsrtp2 libgnutls libleancrypto; do
+    aside="$work/aside/$orphan"
+    rm -rf "$aside" && mkdir -p "$aside"
+    while IFS= read -r lib; do
+        mkdir -p "$aside/${lib%/*}" && mv "$lib" "$aside/$lib"
+    done < <(cd "$appdir" && find . -name "$orphan.so*")
+    if unmet | grep -q "needs $orphan\.so"; then
+        cp -a "$aside/." "$appdir/"
+    fi
+    rm -rf "$aside"
+done
 broken="$(comm -13 <(printf '%s\n' "$before") <(unmet | sort))"
 [ -z "$broken" ] || die "trimming the bundle left these unmet: $broken"
 
