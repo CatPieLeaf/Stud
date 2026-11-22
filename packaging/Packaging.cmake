@@ -39,7 +39,7 @@ set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
 # Fedora's and RPM Fusion's FFmpeg both provide libavcodec-free and
 # libavutil-free.
 set(CPACK_RPM_PACKAGE_REQUIRES
-    "qt6-qtbase-gui, vulkan-loader, SDL3 >= 3.4.0, libcurl.so.4()(64bit), libcrypto.so.3()(64bit), libsecret-1.so.0()(64bit), libz.so.1()(64bit), libxkbcommon.so.0()(64bit), libudev.so.1()(64bit), libavcodec-free, libavutil-free, gamemode")
+    "qt6-qtbase-gui, vulkan-loader, SDL3 >= 3.4.0, libcurl.so.4()(64bit), libcrypto.so.3()(64bit), libsecret-1.so.0()(64bit), libz.so.1()(64bit), libxkbcommon.so.0()(64bit), libudev.so.1()(64bit), (libavcodec-free or ffmpeg-libs), (libavutil-free or ffmpeg-libs), gamemode")
 # WPE WebKit comes from Terra, which plain Fedora lacks: wanted, so dnf installs
 # it wherever Terra is enabled, without failing the install where it is not.
 # Stud's welcome page then shows the command that adds it.

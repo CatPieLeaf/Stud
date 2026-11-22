@@ -32,11 +32,10 @@ Requires:       libvulkan.so.1()(64bit)
 Requires:       libcrypto.so.3()(64bit)
 # The launcher keeps Roblox's login in the system keyring.
 Requires:       libsecret-1.so.0()(64bit)
-# FFmpeg, opened at runtime for video in experiences. Either Fedora's own
-# build or RPM Fusion's full one: both provide these names, whatever the
-# release.
-Requires:       libavcodec-free
-Requires:       libavutil-free
+# FFmpeg, opened at runtime for video in experiences: Fedora's own build, or
+# RPM Fusion's full one, which conflicts with it and holds both libraries.
+Requires:       (libavcodec-free or ffmpeg-libs)
+Requires:       (libavutil-free or ffmpeg-libs)
 # GameMode holds the CPU in its performance mode while Roblox runs; Stud
 # turns it on by default.
 Requires:       gamemode
