@@ -229,7 +229,7 @@ for orphan in libnice libsrtp2 libgnutls libleancrypto; do
     aside="$work/aside/$orphan"
     rm -rf "$aside" && mkdir -p "$aside"
     while IFS= read -r lib; do
-        mkdir -p "$aside/${lib%/*}" && mv "$lib" "$aside/$lib"
+        mkdir -p "$aside/${lib%/*}" && mv "$appdir/$lib" "$aside/$lib"
     done < <(cd "$appdir" && find . -name "$orphan.so*")
     if unmet | grep -q "needs $orphan\.so"; then
         cp -a "$aside/." "$appdir/"
