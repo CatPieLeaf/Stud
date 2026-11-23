@@ -330,6 +330,7 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
         QStringLiteral("ROSEMARY_WINDOW_ICON"), QStringLiteral("ROSEMARY_STATUS_ITEMS"),
         QStringLiteral("ROSEMARY_BACKGROUND_FPS"), QStringLiteral("ROSEMARY_RENDER_SCALE"),
         QStringLiteral("ROSEMARY_UPSCALER"), QStringLiteral("ROSEMARY_WINDOW_STATE"),
+        QStringLiteral("ROSEMARY_WINDOW_ASPECT"),
         QStringLiteral("ROSEMARY_SWAPCHAIN_MAIN_WINDOW_ONLY"), QStringLiteral("ROSEMARY_PROC_TRANSLATED"),
         QStringLiteral("ROSEMARY_REFUSED_PROGRAMS"), QStringLiteral("ROSEMARY_NOTIFICATIONS"),
     };
@@ -360,6 +361,8 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
         env.insert(QStringLiteral("ROSEMARY_RENDER_SCALE"), QString::number(settings.render_scale / 100.0));
         env.insert(QStringLiteral("ROSEMARY_UPSCALER"), QString::fromStdString(settings.upscaler));
     }
+    const QString showcase = QProcessEnvironment::systemEnvironment().value(QStringLiteral("STUD_SHOWCASE"));
+    if (!showcase.isEmpty()) env.insert(QStringLiteral("ROSEMARY_WINDOW_ASPECT"), showcase);
     env.insert(QStringLiteral("SDL_AUDIO_DEVICE_STREAM_NAME"), QStringLiteral("Roblox audio"));
     env.insert(QStringLiteral("SDL_AUDIO_DEVICE_APP_ICON_NAME"),
                QStringLiteral(STUD_APP_ID) + (studio ? QStringLiteral("-studio") : QStringLiteral("-player")));

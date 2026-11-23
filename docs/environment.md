@@ -17,6 +17,7 @@ the source and is missing from this file, so this list cannot quietly go stale.
 | `STUD_TEST_CLIENT` | unset | Tests only: the Roblox `.app` `code_signature_test` checks, instead of the Player Stud installed. |
 | `STUD_TEST_IDENTIFIER` | unset | Tests only: the code identifier that client is signed as, `com.Roblox.RobloxStudio` for Studio; the Player's when unset. |
 | `STUD_HOST_LD_LIBRARY_PATH` | unset | The host's `LD_LIBRARY_PATH`, restored for programs Stud starts on the desktop's behalf. A bundle sets this. |
+| `STUD_SHOWCASE` | unset | Showcase mode, for taking screenshots: `16:9` or `4:3` (any `W:H` works) holds the Roblox and Studio windows to that shape however they are resized. |
 
 ## What Stud sets for the client
 
@@ -51,6 +52,7 @@ log.
 | `SDL_APP_NAME`, `SDL_AUDIO_DEVICE_STREAM_NAME`, `SDL_AUDIO_DEVICE_APP_ICON_NAME` | always | `Stud`, `Roblox audio` and Stud's icon: the sound server lists the game's sound under Stud (Stud's fork makes Rosemary take the name over the bundle's). |
 | `ROSEMARY_RENDER_SCALE` | Render resolution, on Vulkan | The fraction of the window the game is drawn at, below 100%, applied to the backing scale the client is told; unset at 100% and on OpenGL. |
 | `ROSEMARY_UPSCALER` | Upscaler | `ravu-ar` (RAVU-Zoom AR) or `sgsr-ed` (SGSR1 ED), the filter that scales a smaller render back up; unset at 100%. |
+| `ROSEMARY_WINDOW_ASPECT` | `STUD_SHOWCASE` | Its value: the width to height the main window keeps as it is resized. |
 | `MANGOHUD` | MangoHud overlay | `1` when on. |
 | `ROSEMARY_SWAPCHAIN_MAIN_WINDOW_ONLY` | MangoHud overlay | `1` when on: only the main window presents through a Vulkan swapchain, the others by readback, so the overlay is drawn over the main window alone. |
 
