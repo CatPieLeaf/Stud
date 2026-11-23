@@ -1,7 +1,7 @@
 # Builds Stud and attaches the packages to a release. Runs when a release is
 # published (publish it as a pre-release; the publish job makes it latest once
-# everything is attached). A manual run builds main and keeps the packages as
-# artifacts without uploading or pushing anything.
+# everything is attached). A manual run builds the branch it is started on and
+# keeps the packages as artifacts without uploading or pushing anything.
 
 name: Release
 
@@ -92,7 +92,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           # The released tag, so packages are built from the code it names.
-          ref: ${{ env.TAG || 'main' }}
+          ref: ${{ env.TAG || github.sha }}
 
       - name: Version, Rust and the Cargo cache
         uses: ./.github/actions/setup
@@ -163,7 +163,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ env.TAG || 'main' }}
+          ref: ${{ env.TAG || github.sha }}
 
       - name: Lint Flatpak manifest
         # Flathub's linter exits 0 on warnings, so errors are read from its JSON.
@@ -198,7 +198,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ env.TAG || 'main' }}
+          ref: ${{ env.TAG || github.sha }}
 
       - name: Version
         uses: ./.github/actions/setup
@@ -413,7 +413,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           # The released tag, so packages are built from the code it names.
-          ref: ${{ env.TAG || 'main' }}
+          ref: ${{ env.TAG || github.sha }}
 
       - name: Version, Rust and the Cargo cache
         uses: ./.github/actions/setup
@@ -473,7 +473,7 @@ jobs:
 
       - uses: actions/checkout@v7
         with:
-          ref: ${{ env.TAG || 'main' }}
+          ref: ${{ env.TAG || github.sha }}
 
       - name: Version, Rust and the Cargo cache
         uses: ./.github/actions/setup
@@ -540,7 +540,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ env.TAG || 'main' }}
+          ref: ${{ env.TAG || github.sha }}
 
       - name: Version
         uses: ./.github/actions/setup
