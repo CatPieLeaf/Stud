@@ -101,16 +101,19 @@ fetch_tool() {
 fetch_tool quick-sharun.sh
 fetch_tool get-debloated-pkgs.sh
 # WPE WebKit starts its helper processes from a path fixed at build time, as
-# WebKitGTK does; quick-sharun moves WebKitGTK's into the bundle and points the
-# library at them, and only needs to recognise WPE WebKit's library as one too.
+# WebKitGTK does. quick-sharun points WebKitGTK's library at a bundled copy of
+# that path once it recognises WPE WebKit's library as one too; the helpers and
+# the TLS module their network process needs are passed to it below, because it
+# only bundles those along with GTK, which WPE WebKit doesn't use.
 sed -i -e 's#^\([[:space:]]*\)\*libwebkit\*gtk-\*\.so\*)#\1*libwebkit*gtk-*.so*|*libWPEWebKit-*.so*)#' \
     -e 's#^\([[:space:]]*\)\*/libwebkit\*gtk-\*\.so\*)#\1*/libwebkit*gtk-*.so*|*/libWPEWebKit-*.so*)#' \
     "$tools/quick-sharun.sh"
 [ "$(grep -c 'libWPEWebKit-\*\.so\*)' "$tools/quick-sharun.sh")" = 2 ] ||
-    die "quick-sharun's WebKitGTK handling changed; WPE WebKit's helpers would not be bundled"
+    die "quick-sharun's WebKitGTK handling changed; WPE WebKit's helper path would not be bundled"
 wpe_helper="$(find /usr/lib -name WPEWebProcess -path '*wpe-webkit*' -print -quit)"
 [ -n "$wpe_helper" ] || die "WPE WebKit's helper processes are not installed"
-export WEBKIT2GTK_DIR="${wpe_helper%/*}"
+wpe_dir="${wpe_helper%/*}"
+export DEPLOY_P11KIT=1
 
 # Mesa without LLVM. NVIDIA's driver is never bundled; sharun loads the host's.
 say "installing Anylinux's mesa"
@@ -139,6 +142,7 @@ dlopened=(
     /usr/lib/libpipewire-0.3.so.0 /usr/lib/libpulse.so.0 /usr/lib/libasound.so.2
     "/usr/lib/$(soname /usr/lib/libavcodec.so)" "/usr/lib/$(soname /usr/lib/libavutil.so)"
     "/usr/lib/$(soname /usr/lib/libWPEWebKit-2.0.so)"
+    "$wpe_dir" /usr/lib/gio/modules/libgiognutls.so
     /usr/lib/libxkbcommon-x11.so.0
     "$qt_plugins"/kf6/kwindowsystem/*.so
 )
@@ -248,6 +252,12 @@ do
     [ -n "$(find "$appdir" -path "*/plugins/$plugin" -print -quit)" ] ||
         die "no $plugin in the bundle"
 done
+# Where WPE WebKit's library looks for its helpers once quick-sharun has moved its path.
+for helper in WPEWebProcess WPENetworkProcess; do
+    [ -e "$appdir/lib/${wpe_dir##*/}/$helper" ] || die "no $helper in the bundle's lib/${wpe_dir##*/}"
+done
+[ -n "$(find "$appdir" -path '*/gio/modules/libgiognutls.so' -print -quit)" ] ||
+    die "no TLS module for WPE WebKit's network process in the bundle"
 
 # SquashFS, not DwarFS: AppImageHub, firejail and the classic runtime only mount SquashFS.
 uruntime="$tools/uruntime"
