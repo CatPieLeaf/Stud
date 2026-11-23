@@ -27,6 +27,7 @@
 #include "stud/stud_paths.h"
 
 #include <QApplication>
+#include <QHash>
 #include <QClipboard>
 #include <QDBusConnection>
 #include <QDBusInterface>
@@ -316,6 +317,40 @@ QString window_icon_file(stud::ui::client::Product product) {
                : QString();
 }
 
+// Settings' environment variables, one NAME=value per line; blank lines and # comments are skipped.
+QList<QPair<QString, QString>> settings_environment(const stud::config::StudSettings& settings) {
+    QList<QPair<QString, QString>> entries;
+    for (const QString& line : QString::fromStdString(settings.environment).split(QLatin1Char('\n'))) {
+        const QString entry = line.trimmed();
+        const qsizetype equals = entry.indexOf(QLatin1Char('='));
+        if (entry.isEmpty() || entry.startsWith(QLatin1Char('#')) || equals <= 0) continue;
+        entries.append({entry.left(equals).trimmed(), entry.mid(equals + 1)});
+    }
+    return entries;
+}
+
+// Settings' variables in Stud's own environment too, so its STUD_* switches work from there; a
+// variable taken out of Settings gets back the value it had before.
+void apply_settings_environment(const stud::config::StudSettings& settings) {
+    static QHash<QString, std::optional<QByteArray>> before;
+    for (auto it = before.cbegin(); it != before.cend(); ++it) {
+        if (it.value()) {
+            qputenv(it.key().toLocal8Bit().constData(), *it.value());
+        } else {
+            qunsetenv(it.key().toLocal8Bit().constData());
+        }
+    }
+    before.clear();
+    for (const auto& [name, value] : settings_environment(settings)) {
+        const QByteArray key = name.toLocal8Bit();
+        if (!before.contains(name)) {
+            before.insert(name, qEnvironmentVariableIsSet(key.constData()) ? std::optional(qgetenv(key.constData()))
+                                                                           : std::nullopt);
+        }
+        qputenv(key.constData(), value.toLocal8Bit());
+    }
+}
+
 QProcessEnvironment client_environment(const stud::config::StudSettings& settings,
                                        stud::ui::client::Product product) {
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
@@ -361,8 +396,6 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
         env.insert(QStringLiteral("ROSEMARY_RENDER_SCALE"), QString::number(settings.render_scale / 100.0));
         env.insert(QStringLiteral("ROSEMARY_UPSCALER"), QString::fromStdString(settings.upscaler));
     }
-    const QString showcase = QProcessEnvironment::systemEnvironment().value(QStringLiteral("STUD_SHOWCASE"));
-    if (!showcase.isEmpty()) env.insert(QStringLiteral("ROSEMARY_WINDOW_ASPECT"), showcase);
     env.insert(QStringLiteral("SDL_AUDIO_DEVICE_STREAM_NAME"), QStringLiteral("Roblox audio"));
     env.insert(QStringLiteral("SDL_AUDIO_DEVICE_APP_ICON_NAME"),
                QStringLiteral(STUD_APP_ID) + (studio ? QStringLiteral("-studio") : QStringLiteral("-player")));
@@ -429,12 +462,9 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
     apply_gpu_selection(env, settings);
     apply_mangohud(env, settings.mangohud);
     // Last, so Settings' own variables win.
-    for (const QString& line : QString::fromStdString(settings.environment).split(QLatin1Char('\n'))) {
-        const QString entry = line.trimmed();
-        const qsizetype equals = entry.indexOf(QLatin1Char('='));
-        if (entry.isEmpty() || entry.startsWith(QLatin1Char('#')) || equals <= 0) continue;
-        env.insert(entry.left(equals).trimmed(), entry.mid(equals + 1));
-    }
+    for (const auto& [name, value] : settings_environment(settings)) env.insert(name, value);
+    const QString showcase = env.value(QStringLiteral("STUD_SHOWCASE"));
+    if (!showcase.isEmpty()) env.insert(QStringLiteral("ROSEMARY_WINDOW_ASPECT"), showcase);
     return env;
 }
 
@@ -752,6 +782,7 @@ void check_flatpak_permissions() {
 bool launch_game(stud::ui::client::Product product, const std::optional<QString>& deep_link,
                  stud::config::StudSettings settings) {
     g_product = product;
+    apply_settings_environment(settings);
     const bool player = product == stud::ui::client::Product::Player;
     settings.gpu.device_index = stud::ui::chosen_gpu_index(settings.gpu);
 

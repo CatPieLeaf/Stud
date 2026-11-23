@@ -3,7 +3,9 @@
 Every `STUD_*` variable Stud reads, and what it does.
 
 Nothing here is needed for ordinary use: Settings covers what a session needs.
-These exist for packaging and for investigating a specific question.
+These exist for packaging and for investigating a specific question. Each one
+works set before `stud` starts or in Settings' environment variables, which
+Stud applies to itself as well as to the client every time it starts Roblox.
 
 `tests/env_documented_test.cpp` fails the build if a `STUD_*` variable exists in
 the source and is missing from this file, so this list cannot quietly go stale.
