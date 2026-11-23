@@ -93,6 +93,24 @@
   </content_rating>
 
   <releases>
+    <release version="2.0.6" date="2026-11-23">
+      <description>
+        <ul>
+          <li>New: the Customizations page is redesigned, with previews and ready-made cursors, avatar backgrounds and emoji fonts</li>
+          <li>New: a setting to use jsDelivr's mirror instead of GitHub, and Stud falls back to the other host when one fails</li>
+          <li>Changed: smaller downloads for every package</li>
+          <li>Changed: the Flatpak sends notifications through the desktop portal and no longer asks for direct access to the notification service</li>
+          <li>Changed: the app icons fit Flathub's icon grid</li>
+          <li>Fixed: web pages showed no hand over links or i-beams on ext boxes, and text boxes could need several clicks</li>
+          <li>Fixed: the upscaler didn't work properly when the render resolution was below 100%</li>
+          <li>Fixed: movement could stop or get stuck while turning the camera with right-click (#42)</li>
+          <li>Fixed: a gamescope launch wrapper couldn't start in the Flatpak</li>
+          <li>Fixed: folder buttons did nothing in the Flatpak (broken in 2.0.5) and in cpak (#38)</li>
+          <li>Fixed: Export logs and other file dialogs froze in cpak</li>
+          <li>Fixed: the rpm conflicted with RPM Fusion's FFmpeg (#39)</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.5" date="2026-11-20">
       <description>
         <ul>
