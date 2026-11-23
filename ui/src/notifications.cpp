@@ -91,7 +91,7 @@ bool send_notification(const QString& summary, const QString& body, const QStrin
         return true;
     }
     std::printf("stud: notification \"%s\" sent to the desktop\n", qPrintable(summary));
-    if (QFile::exists(QStringLiteral("/.flatpak-info"))) return show_through_portal(summary, body, options);
+    if (stud::config::in_flatpak()) return show_through_portal(summary, body, options);
     QDBusInterface iface("org.freedesktop.Notifications", "/org/freedesktop/Notifications",
                           "org.freedesktop.Notifications", QDBusConnection::sessionBus());
     if (!iface.isValid()) {
