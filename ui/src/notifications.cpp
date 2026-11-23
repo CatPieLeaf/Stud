@@ -2,6 +2,8 @@
 
 #include <QDBusConnection>
 #include <QDBusInterface>
+#include <QDBusMessage>
+#include <QDBusVariant>
 #include <QDBusReply>
 #include <QFile>
 #include <QLocalSocket>
@@ -57,6 +59,29 @@ bool show_in_client(const QString& summary, const QString& body) {
     return false;
 }
 
+// Through the notification portal, which a Flatpak reaches without a D-Bus
+// permission of its own; the portal gives it the app's icon itself.
+bool show_through_portal(const QString& summary, const QString& body, const NotificationOptions& options) {
+    QDBusInterface portal("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+                          "org.freedesktop.portal.Notification", QDBusConnection::sessionBus());
+    if (!portal.isValid()) return false;
+    QVariantMap notification{{QStringLiteral("title"), summary},
+                             {QStringLiteral("body"), body},
+                             {QStringLiteral("priority"), options.transient ? QStringLiteral("low")
+                                                                            : QStringLiteral("normal")}};
+    // Version 2 added these; an older portal may refuse keys it doesn't know.
+    if (portal.property("version").toUInt() >= 2) {
+        if (options.transient) notification.insert(QStringLiteral("display-hint"), QStringList{QStringLiteral("transient")});
+        if (options.suppress_sound) {
+            notification.insert(QStringLiteral("sound"), QVariant::fromValue(QDBusVariant(QStringLiteral("silent"))));
+        }
+    }
+    static uint sent = 0;
+    const QDBusMessage reply = portal.call(QStringLiteral("AddNotification"),
+                                           QStringLiteral("stud-%1").arg(sent++), notification);
+    return reply.type() != QDBusMessage::ErrorMessage;
+}
+
 }  // namespace
 
 bool send_notification(const QString& summary, const QString& body, const QString& icon,
@@ -66,6 +91,7 @@ bool send_notification(const QString& summary, const QString& body, const QStrin
         return true;
     }
     std::printf("stud: notification \"%s\" sent to the desktop\n", qPrintable(summary));
+    if (QFile::exists(QStringLiteral("/.flatpak-info"))) return show_through_portal(summary, body, options);
     QDBusInterface iface("org.freedesktop.Notifications", "/org/freedesktop/Notifications",
                           "org.freedesktop.Notifications", QDBusConnection::sessionBus());
     if (!iface.isValid()) {

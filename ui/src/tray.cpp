@@ -5,6 +5,7 @@
 
 #include "game_activity.h"
 #include "log_export.h"
+#include "notifications.h"
 
 #include "settings_window.h"
 
@@ -170,9 +171,8 @@ void Tray::copyServerLink() {
         copier.setStandardErrorFile(QProcess::nullDevice());
         copier.start();
         if (!copier.waitForStarted(2000)) {
-            icon_->showMessage(QStringLiteral("Stud"),
-                               QStringLiteral("Could not copy: this desktop needs wl-clipboard installed."),
-                               QSystemTrayIcon::Warning, 5000);
+            send_notification(QStringLiteral("Stud"),
+                              QStringLiteral("Could not copy: this desktop needs wl-clipboard installed."));
             return;
         }
         copier.write(link.toUtf8());
@@ -181,14 +181,14 @@ void Tray::copyServerLink() {
         copier.waitForFinished(2000);
     }
     QApplication::clipboard()->setText(link);
-    icon_->showMessage(QStringLiteral("Stud"), QStringLiteral("Server link copied."),
-                       QSystemTrayIcon::Information, 3000);
+    send_notification(QStringLiteral("Stud"), QStringLiteral("Server link copied."), QString(),
+                      {/*transient=*/true, /*suppress_sound=*/false});
 }
 
 void Tray::exportLogs() {
     const QString saved = export_all_logs(nullptr);
     if (!saved.isEmpty()) {
-        icon_->showMessage(QStringLiteral("Stud"), saved, QSystemTrayIcon::Information, 4000);
+        send_notification(QStringLiteral("Stud"), saved);
     }
 }
 

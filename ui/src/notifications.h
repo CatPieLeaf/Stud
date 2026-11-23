@@ -2,8 +2,9 @@
 
 #include <QString>
 
-// Desktop notifications via org.freedesktop.Notifications over D-Bus, or a
-// Mac-style banner in the running client when the notifications setting asks.
+// Desktop notifications via org.freedesktop.Notifications over D-Bus (the
+// notification portal inside a Flatpak), or a Mac-style banner in the running
+// client when the notifications setting asks.
 
 namespace stud::ui {
 
