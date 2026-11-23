@@ -74,7 +74,8 @@ endforeach()
 set(CPACK_RPM_SPEC_MORE_DEFINE "%global __os_install_post %{nil}
 %global debug_package %{nil}
 %global __brp_strip %{nil}
-%global __brp_strip_static_archive %{nil}")
+%global __brp_strip_static_archive %{nil}
+%define _binary_payload w9.xzdio")
 
 # ---------------------------------------------------------------- DEB
 set(CPACK_DEBIAN_PACKAGE_NAME "stud")
@@ -86,6 +87,9 @@ set(CPACK_DEBIAN_PACKAGE_MAINTAINER "${CPACK_PACKAGE_CONTACT}")
 # and silently produced a package dpkg refused. x86_64 only, like every format.
 set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
 set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
+# xz instead of the default gzip; CMake before 4.3 ignores the level and uses xz's own.
+set(CPACK_DEBIAN_COMPRESSION_TYPE "xz")
+set(CPACK_DEBIAN_COMPRESSION_LEVEL 9)
 # Qt is named by Debian package with a version floor, so apt refuses a system too
 # old to run the build instead of the loader failing at start (Qt symbols are
 # versioned). Built on ubuntu:26.04, the oldest with Qt 6.9 and SDL 3.4; the

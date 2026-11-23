@@ -260,8 +260,9 @@ packages="$build_dir/packages"
 out="$packages/Stud-$arch.AppImage"
 mkdir -p "$packages"
 rm -f "$out" "$out.zsync" "$work/image.squashfs"
+# xz with its x86 branch filter: about a tenth smaller than zstd for a tree that is mostly libraries.
 "$uruntime" --appimage-mksquashfs "$appdir" "$work/image.squashfs" \
-    -comp zstd -Xcompression-level 19 -b 1M -all-root -noappend -no-progress -quiet
+    -comp xz -Xbcj x86 -b 1M -all-root -noappend -no-progress -quiet
 cp "$uruntime" "$out"
 # Lets AppImageUpdate update Stud in place from the latest release's .zsync.
 "$out" --appimage-addupdinfo "gh-releases-zsync|CatPieLeaf|Stud|latest|Stud-$arch.AppImage.zsync"

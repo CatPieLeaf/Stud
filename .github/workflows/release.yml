@@ -262,9 +262,11 @@ jobs:
           [ "$EVENT" = release ] || exit 0
           echo "$GH_TOKEN" | podman login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
           # The registry's digest, from the push: podman re-encodes the image.
-          podman push --digestfile cpak-image-digest.txt \
+          # zstd layers, the base image's too; cpak reads them since its manifest version 3.
+          podman push --compression-format zstd --force-compression --digestfile cpak-image-digest.txt \
             "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:${version}"
-          podman push "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:latest"
+          podman push --compression-format zstd --force-compression \
+            "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:latest"
           cat cpak-image-digest.txt
 
       - name: Verify the Arch recipes agree with each other and with the tree
@@ -328,6 +330,9 @@ jobs:
           pacman -Syu --noconfirm --needed base-devel zstd
           useradd -m builder
           cp /work/PKGBUILD /home/builder/
+          # makepkg's default zstd level is low; 22 packs the same files about a fifth smaller.
+          mkdir -p /home/builder/.config/pacman
+          echo 'COMPRESSZST=(zstd -c -T0 --ultra -22 -)' > /home/builder/.config/pacman/makepkg.conf
           chown -R builder:builder /home/builder
           su builder -c "cd /home/builder && STUD_DESTDIR=/work/install-tree PKGEXT=.pkg.tar.zst makepkg --nodeps --noconfirm"
           cp /home/builder/*.pkg.tar.zst /work/
