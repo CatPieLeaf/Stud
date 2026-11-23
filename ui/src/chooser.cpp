@@ -24,6 +24,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QMouseEvent>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -35,11 +36,13 @@
 #include <QTextBrowser>
 #include <QStyle>
 #include <QTimer>
+#include <QTransform>
 #include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <numbers>
 
@@ -82,7 +85,21 @@ public:
         step();
     }
 
+    void on_click(std::function<void()> clicked) {
+        clicked_ = std::move(clicked);
+        setMouseTracking(true);
+    }
+
 protected:
+    void mousePressEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton && clicked_ && over_drawing(event->position())) clicked_();
+        QWidget::mousePressEvent(event);
+    }
+    void mouseMoveEvent(QMouseEvent* event) override {
+        if (clicked_) setCursor(over_drawing(event->position()) ? Qt::PointingHandCursor : Qt::ArrowCursor);
+        QWidget::mouseMoveEvent(event);
+    }
+
     // Frames only while it can be seen.
     void showEvent(QShowEvent* event) override {
         frames_.start();
@@ -143,6 +160,21 @@ private:
     static constexpr int kShineEveryMaxMs = 10000;
 
     double seconds() const { return double(clock_.elapsed()) / 1000.0; }
+
+    // Whether `at` lands on the cube or on a visible pixel of the title, as the
+    // last frame painted them, sway included.
+    bool over_drawing(QPointF at) const {
+        const QPointF local = QTransform().translate(pivot_.x(), pivot_.y()).rotate(angle_).inverted().map(at);
+        if (QRectF(anchor_.x() - cube_size_ / 2.0, anchor_.y() - cube_size_ / 2.0, cube_size_, cube_size_)
+                .contains(local)) {
+            return true;
+        }
+        const QSizeF size = logo_.deviceIndependentSize();
+        const QPointF in_logo = (local + QPointF(size.width() / 2.0, size.height() / 2.0)) * logo_.devicePixelRatio();
+        const QPoint pixel(int(in_logo.x()), int(in_logo.y()));
+        return logo_.valid(pixel) && qAlpha(logo_.pixel(pixel)) > 0;
+    }
+
     double next_shine_after(double now) const {
         return now + QRandomGenerator::global()->bounded(kShineEveryMinMs, kShineEveryMaxMs) / 1000.0;
     }
@@ -161,6 +193,7 @@ private:
     }
 
     QTimer frames_;
+    std::function<void()> clicked_;
     QImage logo_;
     int cube_size_;
     QPointF anchor_;
@@ -343,16 +376,23 @@ std::optional<client::Product> choose_product() {
         }
     }
     if (!quotes.isEmpty()) {
-        // Italic in the markup, so styles can't override it.
-        auto* quote = new QLabel(
-            QStringLiteral("<i>%1</i>").arg(quotes.at(QRandomGenerator::global()->bounded(quotes.size())).toHtmlEscaped()),
-            &dialog);
+        auto* quote = new QLabel(&dialog);
         quote->setTextFormat(Qt::RichText);
         quote->setWordWrap(true);
         quote->setAlignment(Qt::AlignCenter);
         // Fixed to the header's width so long lines wrap.
         quote->setFixedWidth(top->sizeHint().width());
         layout->addWidget(quote, 0, Qt::AlignHCenter);
+        // Clicking the logo shows another quote, never the same one twice in a row.
+        auto show_quote = [quote, quotes, shown = qsizetype(-1)]() mutable {
+            qsizetype next = QRandomGenerator::global()->bounded(quotes.size() - (shown < 0 ? 0 : 1));
+            if (shown >= 0 && next >= shown) ++next;
+            shown = quotes.size() > 1 ? next : -1;
+            // Italic in the markup, so styles can't override it.
+            quote->setText(QStringLiteral("<i>%1</i>").arg(quotes.at(next).toHtmlEscaped()));
+        };
+        show_quote();
+        header->on_click(show_quote);
     }
     if (rpm_without_wpe()) {
         QFrame* warning = command_warning(
