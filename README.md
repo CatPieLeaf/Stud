@@ -39,16 +39,19 @@
   <h4 id="screenshots"><img src=".github/headers/screenshots.png" width="800" alt="Screenshots"></h4>
 </div>
 
-<div align="center">
-  <img src="packaging/screenshots/settings.png"></img>
-</div>
+<table align="center">
+  <tr>
+    <td><a href="packaging/screenshots/welcome.png"><img src="packaging/screenshots/welcome.png" height="340" alt="Stud's welcome screen"></a></td>
+    <td><a href="packaging/screenshots/settings.png"><img src="packaging/screenshots/settings.png" height="340" alt="Stud's settings"></a></td>
+  </tr>
+</table>
 
 <table align="center">
   <tr>
-    <td><a href="packaging/screenshots/home.png"><img src="packaging/screenshots/home.png" width="260"></a></td>
-    <td><a href="packaging/screenshots/game1.png"><img src="packaging/screenshots/game1.png" width="260"></a></td>
-    <td><a href="packaging/screenshots/game2.png"><img src="packaging/screenshots/game2.png" width="260"></a></td>
-    <td><a href="packaging/screenshots/game3.png"><img src="packaging/screenshots/game3.png" width="260"></a></td>
+    <td><a href="packaging/screenshots/home.png"><img src="packaging/screenshots/home.png" width="260" alt="Roblox Player running on Stud"></a></td>
+    <td><a href="packaging/screenshots/tunneler.png"><img src="packaging/screenshots/tunneler.png" width="260" alt="The Tunneler game on Roblox"></a></td>
+    <td><a href="packaging/screenshots/innovationtpp.png"><img src="packaging/screenshots/innovationtpp.png" width="260" alt="The Innovation Thermal Power Plant game on Roblox"></a></td>
+    <td><a href="packaging/screenshots/toonsuniverse.png"><img src="packaging/screenshots/toonsuniverse.png" width="260" alt="The Toons Universe game on Roblox"></a></td>
   </tr>
 </table>
 

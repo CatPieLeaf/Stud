@@ -36,24 +36,32 @@
 
   <screenshots>
     <screenshot type="default">
+      <caption>Roblox Player running on Stud</caption>
+      <image type="source" width="1666" height="1043">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/home.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Roblox Studio running on Stud</caption>
+      <image type="source" width="1763" height="1098">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/studio.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The "Tunneler" game on Roblox</caption>
+      <image type="source" width="1666" height="1043">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/tunneler.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The "Innovation Thermal Power Plant" game on Roblox</caption>
+      <image type="source" width="1666" height="1043">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/innovationtpp.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The "Toons Universe" game on Roblox</caption>
+      <image type="source" width="1666" height="1043">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/toonsuniverse.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Stud's welcome screen</caption>
+      <image type="source" width="644" height="524">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/welcome.png</image>
+    </screenshot>
+    <screenshot>
       <caption>Stud's settings</caption>
-      <image type="source" width="1388" height="657">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/settings.png</image>
-    </screenshot>
-    <screenshot>
-      <caption>The Roblox home screen, running on a Linux desktop</caption>
-      <image type="source" width="1013" height="783">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/home.png</image>
-    </screenshot>
-    <screenshot>
-      <caption>An experience in progress</caption>
-      <image type="source" width="1013" height="783">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/game1.png</image>
-    </screenshot>
-    <screenshot>
-      <caption>An experience in progress</caption>
-      <image type="source" width="1013" height="783">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/game2.png</image>
-    </screenshot>
-    <screenshot>
-      <caption>An experience in progress</caption>
-      <image type="source" width="1013" height="783">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/game3.png</image>
+      <image type="source" width="1007" height="781">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/settings.png</image>
     </screenshot>
   </screenshots>
 
