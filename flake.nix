@@ -27,7 +27,7 @@
 
           src = pkgs.fetchurl {
             url = "https://github.com/CatPieLeaf/Stud/archive/refs/tags/2.0.6.tar.gz";
-            sha256 = "a145de1e427af49bdfbc9cd51b9d96d99d28d5b4068342f50410de8a0455fc27";
+            sha256 = "797c40e75ef936a7b5111ddc2c132150cc0c5c4aa26fc074ae0f5b7d83259230";
           };
 
           miniz = pkgs.fetchFromGitHub {

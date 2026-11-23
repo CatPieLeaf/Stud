@@ -4,7 +4,7 @@
   "name": "Stud",
   "description": "Play and create games on Roblox",
   "version": "2.0.6",
-  "image": "ghcr.io/catpieleaf/stud@sha256:bedb08a081f8b43d7202fabf7ab884d9a35a072e88ba7e39ab93022d2c86e137",
+  "image": "ghcr.io/catpieleaf/stud@sha256:eefcd9ced3559453f8a495bdbb6af6ad445ba1cf50a7f96476a61857c9b2dc34",
   "binaries": [
     "/usr/bin/stud"
   ],

@@ -46,11 +46,11 @@
         "rust-overlay": "rust-overlay"
       },
       "locked": {
-        "lastModified": 1795196904,
-        "narHash": "sha256-o1sJxBwZOLLtXzm0TlhpTtphdNMSHO0YMDk5BCwizJw=",
+        "lastModified": 1795462413,
+        "narHash": "sha256-C7WwL2ZaI/c5JoR7BY/Cryw/QnLRLxOxxA7yRAZeDb4=",
         "owner": "CatPieLeaf",
         "repo": "rosemary-stud",
-        "rev": "bc121a5b18de973702f0c135909b8b684cbed2b1",
+        "rev": "eadcff79d3bea75282bdd045d5159717909861d3",
         "type": "github"
       },
       "original": {
