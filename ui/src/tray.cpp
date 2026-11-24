@@ -12,7 +12,7 @@
 #include "stud/stud_paths.h"
 
 // Defined in main.cpp.
-namespace stud::ui { void terminate_stud_session(); }
+namespace stud::ui { void kill_stud_session(); }
 #include "update_check.h"
 
 #include <QApplication>
@@ -254,9 +254,9 @@ void Tray::showAbout() {
 }
 
 void Tray::quitStud() {
-    // Ends the whole session, as closing Roblox's window does.
+    // Kills the whole session at once, so a frozen Roblox ends without a task manager.
     if (icon_ != nullptr) icon_->hide();
-    terminate_stud_session();
+    kill_stud_session();
     QApplication::quit();
 }
 

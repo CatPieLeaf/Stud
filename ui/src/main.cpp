@@ -1101,9 +1101,57 @@ std::vector<pid_t> client_process_ids() {
     return pids;
 }
 
+// Every process descended from `root`: a launch wrapper's own children carry no prefix.
+std::vector<pid_t> descendants_of(pid_t root) {
+    std::multimap<pid_t, pid_t> children;
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator("/proc", ec)) {
+        const std::string name = entry.path().filename().string();
+        if (name.empty() || !std::all_of(name.begin(), name.end(), ::isdigit)) continue;
+        std::ifstream stat(entry.path() / "stat");
+        std::string line;
+        std::getline(stat, line);
+        // The parent follows the command name, which may hold spaces, so read after its last ')'.
+        const auto close = line.rfind(')');
+        if (close == std::string::npos) continue;
+        std::istringstream rest(line.substr(close + 1));
+        char state = 0;
+        pid_t parent = 0;
+        if (rest >> state >> parent) children.emplace(parent, static_cast<pid_t>(std::stol(name)));
+    }
+    std::vector<pid_t> found;
+    std::vector<pid_t> pending{root};
+    while (!pending.empty()) {
+        const pid_t pid = pending.back();
+        pending.pop_back();
+        const auto [first, last] = children.equal_range(pid);
+        for (auto it = first; it != last; ++it) {
+            found.push_back(it->second);
+            pending.push_back(it->second);
+        }
+    }
+    return found;
+}
+
 }  // namespace
 
 namespace stud::ui {
+
+void kill_stud_session() {
+    if (g_client == nullptr) return;
+    g_stop_requested = true;
+    std::printf("stud: Exit Stud ends Roblox and every process of its session at once\n");
+    std::fflush(stdout);
+    std::vector<pid_t> pids = client_process_ids();
+    if (const pid_t wrapper = static_cast<pid_t>(g_client->processId()); wrapper > 0) {
+        const std::vector<pid_t> below = descendants_of(wrapper);
+        pids.insert(pids.end(), below.begin(), below.end());
+        pids.push_back(wrapper);
+    }
+    for (const pid_t pid : pids) ::kill(pid, SIGKILL);
+    // Reaped, and its output read to the end, so the session log is complete.
+    g_client->waitForFinished(-1);
+}
 
 void terminate_stud_session() {
     if (g_client == nullptr) return;
