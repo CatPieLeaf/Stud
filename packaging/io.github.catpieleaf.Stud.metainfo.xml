@@ -93,6 +93,16 @@
   </content_rating>
 
   <releases>
+    <release version="2.0.8" date="2026-11-24">
+      <description>
+        <ul>
+          <li>Fixed: the AppImage crashed when Roblox opened a web page, such as signing in</li>
+          <li>Fixed: frames jittered back and forth on older NVIDIA cards under Wayland (#39)</li>
+          <li>Changed: environment variables set in Settings now apply to Stud itself too</li>
+          <li>New: clicking the logo on the welcome screen shows another quote</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.7" date="2026-11-24">
       <description>
         <ul>

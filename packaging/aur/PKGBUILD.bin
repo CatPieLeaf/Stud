@@ -3,7 +3,7 @@
 # Not for the AUR: CI packages an existing install tree (STUD_DESTDIR) with it.
 
 pkgname=stud
-pkgver=2.0.7
+pkgver=2.0.8
 pkgrel=1
 pkgdesc="Play and create games on Roblox"
 arch=('x86_64')

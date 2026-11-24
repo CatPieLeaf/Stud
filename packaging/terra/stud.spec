@@ -5,7 +5,7 @@
 %global debug_package %{nil}
 
 Name:           stud
-Version:        2.0.7
+Version:        2.0.8
 Release:        1%{?dist}
 Summary:        Play and create games on Roblox
 
@@ -98,6 +98,12 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Tue Nov 24 2026 CatPieLeaf <catpieleaf@proton.me> - 2.0.8-1
+- Fixed: the AppImage crashed when Roblox opened a web page, such as signing in
+- Fixed: frames jittered back and forth on older NVIDIA cards under Wayland (#39)
+- Changed: environment variables set in Settings now apply to Stud itself too
+- New: clicking the logo on the welcome screen shows another quote
+
 * Tue Nov 24 2026 CatPieLeaf <catpieleaf@proton.me> - 2.0.7-1
 - Fixed: the AppImage crashed when Roblox opened a web page, such as signing in
 - Fixed: frames jittered back and forth on older NVIDIA cards under Wayland (#39)
