@@ -38,6 +38,7 @@ log.
 | `ROSEMARY_DECORATIONS` | MacOS title bar | `client` for the macOS title bar, `server` for the desktop's own. |
 | `ROSEMARY_MENU` | MacOS title bar | `titlebar` with the menu bar, `none` without. |
 | `ROSEMARY_CONTROL_EDIT_KEYS` | the Player | `1`: Ctrl for copy, cut and paste. |
+| `ROSEMARY_PLAIN_CTRL_CLICK` | the Player | `1`: a left click with Ctrl held reaches the game as a left click, not as the right click a Mac makes of it. |
 | `ROSEMARY_COMMAND_KEY` | Studio | `ctrl`: Ctrl as Command in every shortcut, as Studio on Windows has it (Ctrl+S saves, Ctrl+1 to 4 pick tools, Ctrl-click adds to a selection); Super takes Control's place. |
 | `ROSEMARY_SCREEN_REFRESH_RATE` | Presentation | `9999` for the two without VSync: the client paces itself to the refresh rate it is told, so they are uncapped. Roblox's own `FramerateCap` is lifted to match. Set before `stud` or in Settings' environment variables, its value is passed on instead, which caps the client at that frame rate. |
 | `VK_DRIVER_FILES`, `__GL_SHADER_DISK_CACHE_SKIP_CLEANUP` | an NVIDIA GPU | Only NVIDIA's Vulkan driver, and its shader cache never cleaned up. |

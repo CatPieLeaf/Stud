@@ -378,6 +378,7 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
         QStringLiteral("ROSEMARY_PREFIX"), QStringLiteral("ROSEMARY_PREFIX_SETUP"),
         QStringLiteral("ROSEMARY_DECORATIONS"), QStringLiteral("ROSEMARY_MENU"),
         QStringLiteral("ROSEMARY_CONTROL_EDIT_KEYS"), QStringLiteral("ROSEMARY_COMMAND_KEY"),
+        QStringLiteral("ROSEMARY_PLAIN_CTRL_CLICK"),
         QStringLiteral("ROSEMARY_SWAP_INTERVAL"),
         QStringLiteral("ROSEMARY_METAL_PRESENTATION_MODE"), QStringLiteral("ROSEMARY_WINDOW_TITLE"),
         QStringLiteral("ROSEMARY_WINDOW_ICON"), QStringLiteral("ROSEMARY_STATUS_ITEMS"),
@@ -459,6 +460,8 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
         env.insert(QStringLiteral("ROSEMARY_COMMAND_KEY"), QStringLiteral("ctrl"));
     } else {
         env.insert(QStringLiteral("ROSEMARY_CONTROL_EDIT_KEYS"), QStringLiteral("1"));
+        // A Mac's Control-click is a right click, so games read Ctrl+left click as one.
+        env.insert(QStringLiteral("ROSEMARY_PLAIN_CTRL_CLICK"), QStringLiteral("1"));
     }
 
     // VSync off means uncapped: the client paces itself to the refresh rate it
