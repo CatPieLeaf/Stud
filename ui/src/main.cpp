@@ -984,6 +984,17 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
         g_client->setProcessEnvironment(client_env);
     } else {
         std::printf("stud: Roblox starts through %s\n", qPrintable(wrapper.join(QLatin1Char(' '))));
+        // Rosemary's server and its launchd started here, outside the wrapper: gamescope's
+        // reaper adopts every descendant and waits for them all, the server's linger included.
+        QProcess server;
+        server.setProgram(rosemary);
+        server.setArguments({QStringLiteral("server")});
+        server.setProcessEnvironment(client_env);
+        server.setStandardInputFile(QProcess::nullDevice());
+        server.setStandardOutputFile(QProcess::nullDevice());
+        server.setStandardErrorFile(QProcess::nullDevice());
+        server.start();
+        server.waitForFinished();
         const QStringList game_only = env_arguments(wrapper_env, client_env);
         g_client->setProgram(wrapper.takeFirst());
         g_client->setArguments(wrapper +
