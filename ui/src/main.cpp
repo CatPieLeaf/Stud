@@ -331,8 +331,10 @@ QList<QPair<QString, QString>> settings_environment(const stud::config::StudSett
 
 // Settings' variables in Stud's own environment too, so its STUD_* switches work from there; a
 // variable taken out of Settings gets back the value it had before.
+QHash<QString, std::optional<QByteArray>> g_before_settings_environment;
+
 void apply_settings_environment(const stud::config::StudSettings& settings) {
-    static QHash<QString, std::optional<QByteArray>> before;
+    auto& before = g_before_settings_environment;
     for (auto it = before.cbegin(); it != before.cend(); ++it) {
         if (it.value()) {
             qputenv(it.key().toLocal8Bit().constData(), *it.value());
@@ -349,6 +351,20 @@ void apply_settings_environment(const stud::config::StudSettings& settings) {
         }
         qputenv(key.constData(), value.toLocal8Bit());
     }
+}
+
+// Stud's environment as it started, so a Stud it starts takes Settings' variables from Settings,
+// not as values it was started with.
+QProcessEnvironment environment_before_settings() {
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    for (auto it = g_before_settings_environment.cbegin(); it != g_before_settings_environment.cend(); ++it) {
+        if (it.value()) {
+            env.insert(it.key(), QString::fromLocal8Bit(*it.value()));
+        } else {
+            env.remove(it.key());
+        }
+    }
+    return env;
 }
 
 QProcessEnvironment client_environment(const stud::config::StudSettings& settings,
@@ -1070,7 +1086,7 @@ bool stud_session_is_running() {
 
 void relaunch_stud() {
     g_relaunch_pending = true;
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    QProcessEnvironment env = environment_before_settings();
     env.remove(QStringLiteral("STUD_LOG_FILE"));
     if (g_layers_disable_was_set) {
         env.insert(QStringLiteral("VK_LOADER_LAYERS_DISABLE"), g_host_layers_disable);
