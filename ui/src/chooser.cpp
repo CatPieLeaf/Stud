@@ -250,11 +250,12 @@ private:
 void show_release_notes(QWidget* parent) {
     auto* dialog = new QDialog(parent);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->setWindowTitle(QStringLiteral("Stud %1").arg(QStringLiteral(STUD_VERSION)));
+    dialog->setWindowTitle(
+        QCoreApplication::translate("Chooser", "Stud %1").arg(QString::fromLatin1(STUD_VERSION)));
     auto* layout = new QVBoxLayout(dialog);
     auto* notes = new NotesView(dialog);
     notes->setOpenExternalLinks(true);
-    notes->setText(QStringLiteral("Loading the release notes..."));
+    notes->setText(QCoreApplication::translate("Chooser", "Loading the release notes..."));
     layout->addWidget(notes);
     auto* close = new QDialogButtonBox(QDialogButtonBox::Close, dialog);
     QObject::connect(close, &QDialogButtonBox::rejected, dialog, &QDialog::close);
@@ -274,8 +275,9 @@ void show_release_notes(QWidget* parent) {
         const QJsonObject release = QJsonDocument::fromJson(reply->readAll()).object();
         const QString body = release.value(QStringLiteral("body_html")).toString();
         if (reply->error() != QNetworkReply::NoError || body.isEmpty()) {
-            notes->setText(QStringLiteral("There are no release notes for Stud %1 on GitHub.")
-                               .arg(QStringLiteral(STUD_VERSION)));
+            notes->setText(QCoreApplication::translate("Chooser",
+                                                      "There are no release notes for Stud %1 on GitHub.")
+                               .arg(QString::fromLatin1(STUD_VERSION)));
             return;
         }
         const QString name = release.value(QStringLiteral("name")).toString();
@@ -313,8 +315,10 @@ std::optional<client::Product> choose_product() {
 
     auto* about = new QVBoxLayout();
     about->addStretch();
-    auto* by = new QLabel(QStringLiteral("By CatPieLeaf"), &dialog);
-    auto* version = new QLabel(QStringLiteral("Version %1").arg(QStringLiteral(STUD_VERSION)), &dialog);
+    auto* by = new QLabel(QCoreApplication::translate("Chooser", "By %1").arg(QStringLiteral("CatPieLeaf")),
+                          &dialog);
+    auto* version = new QLabel(
+        QCoreApplication::translate("Chooser", "Version %1").arg(QString::fromLatin1(STUD_VERSION)), &dialog);
     by->setAlignment(Qt::AlignRight);
     version->setAlignment(Qt::AlignRight);
     // A newer Stud exists: the version turns into a red link to it.
@@ -322,10 +326,13 @@ std::optional<client::Product> choose_product() {
         version->setTextFormat(Qt::RichText);
         version->setOpenExternalLinks(false);
         QObject::connect(version, &QLabel::linkActivated, version, [](const QString&) { UpdateCheck::open(); });
-        version->setText(QStringLiteral("<a href=\"%1\" style=\"color:#d62f2f; text-decoration:underline;\">"
+        version->setText(
+            QCoreApplication::translate("Chooser",
+                                        "<a href=\"%1\" style=\"color:#d62f2f; text-decoration:underline;\">"
                                         "Version %2</a>")
-                             .arg(UpdateCheck::releasesUrl(), QStringLiteral(STUD_VERSION)));
-        version->setToolTip(QStringLiteral("Stud %1 is available").arg(UpdateCheck::latestVersion()));
+                .arg(UpdateCheck::releasesUrl(), QString::fromLatin1(STUD_VERSION)));
+        version->setToolTip(
+            QCoreApplication::translate("Chooser", "Stud %1 is available").arg(UpdateCheck::latestVersion()));
     };
     QObject::connect(UpdateCheck::instance(), &UpdateCheck::updateFound, version,
                      [mark_outdated](const QString&) { mark_outdated(); });
@@ -335,7 +342,7 @@ std::optional<client::Product> choose_product() {
     about->addWidget(version, 0, Qt::AlignRight);
     auto* notes = new QPushButton(&dialog);
     notes->setIcon(mono_icon("help-about", QStyle::SP_MessageBoxInformation));
-    notes->setToolTip(QStringLiteral("Release notes"));
+    notes->setToolTip(QCoreApplication::translate("Chooser", "Release notes"));
     QObject::connect(notes, &QPushButton::clicked, &dialog, [&dialog] { show_release_notes(&dialog); });
     auto* discord = discord_button(&dialog, /*labelled=*/false);
     const int side = notes->sizeHint().height();
@@ -397,8 +404,9 @@ std::optional<client::Product> choose_product() {
     if (rpm_without_wpe()) {
         QFrame* warning = command_warning(
             &dialog,
-            QStringLiteral("Roblox's sign-in and web pages need WPE WebKit, which Fedora doesn't package. "
-                           "Add the Terra repository and install it, then restart Stud:"),
+            QCoreApplication::translate("Chooser",
+                                        "Roblox's sign-in and web pages need WPE WebKit, which Fedora doesn't "
+                                        "package. Add the Terra repository and install it, then restart Stud:"),
             QStringLiteral("sudo dnf install --nogpgcheck --repofrompath "
                            "'terra,https://repos.fyralabs.com/terra$releasever' terra-release && "
                            "sudo dnf install wpewebkit"));
@@ -428,7 +436,7 @@ std::optional<client::Product> choose_product() {
     buttons->addStretch();
     layout->addLayout(buttons);
 
-    auto* settings = new QPushButton(QStringLiteral("Settings"), &dialog);
+    auto* settings = new QPushButton(QCoreApplication::translate("Chooser", "Settings"), &dialog);
     settings->setIcon(mono_icon("configure", QStyle::SP_FileDialogDetailedView));
     QObject::connect(settings, &QPushButton::clicked, &dialog, [] { SettingsWindow::showSingleton(); });
     layout->addWidget(settings, 0, Qt::AlignHCenter);

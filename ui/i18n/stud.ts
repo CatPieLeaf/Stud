@@ -2,6 +2,67 @@
 <!DOCTYPE TS>
 <TS version="2.1">
 <context>
+    <name>Chooser</name>
+    <message>
+        <location filename="../src/chooser.cpp" line="254"/>
+        <source>Stud %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/chooser.cpp" line="258"/>
+        <source>Loading the release notes...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/chooser.cpp" line="278"/>
+        <source>There are no release notes for Stud %1 on GitHub.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/chooser.cpp" line="318"/>
+        <source>By %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/chooser.cpp" line="321"/>
+        <source>Version %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/chooser.cpp" line="330"/>
+        <source>&lt;a href=&quot;%1&quot; style=&quot;color:#d62f2f; text-decoration:underline;&quot;&gt;Version %2&lt;/a&gt;</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/chooser.cpp" line="335"/>
+        <source>Stud %1 is available</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/chooser.cpp" line="345"/>
+        <source>Release notes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/chooser.cpp" line="407"/>
+        <source>Roblox&apos;s sign-in and web pages need WPE WebKit, which Fedora doesn&apos;t package. Add the Terra repository and install it, then restart Stud:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/chooser.cpp" line="439"/>
+        <source>Settings</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>LoadingScreen</name>
+    <message>
+        <location filename="../src/loading_screen.cpp" line="82"/>
+        <source>Cancel</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>stud::ui::Tray</name>
     <message>
         <location filename="../src/tray.cpp" line="85"/>
