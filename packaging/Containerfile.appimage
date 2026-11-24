@@ -13,7 +13,7 @@ FROM docker.io/library/archlinux:latest
 RUN pacman -Syu --noconfirm --needed \
         base-devel cmake ninja git python curl zstd nasm vulkan-headers \
         rust shaderc sdl3 ffmpeg \
-        qt6-base qt6-wayland breeze wpewebkit \
+        qt6-base qt6-wayland breeze wpewebkit bubblewrap xdg-dbus-proxy \
         vulkan-icd-loader libglvnd mesa libx11 libxext libxi libxrandr \
         libxcursor libxfixes libxss wayland libxkbcommon libxkbcommon-x11 libdecor \
         systemd-libs pipewire libpulse alsa-lib libsecret \

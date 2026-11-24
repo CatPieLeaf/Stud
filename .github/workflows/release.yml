@@ -404,7 +404,7 @@ jobs:
           pacman -Syu --noconfirm --needed \
             base-devel cmake ninja git python curl zstd nasm vulkan-headers \
             rust shaderc sdl3 ffmpeg \
-            qt6-base qt6-wayland breeze wpewebkit openssl libsecret \
+            qt6-base qt6-wayland breeze wpewebkit bubblewrap xdg-dbus-proxy openssl libsecret \
             vulkan-icd-loader libglvnd mesa libx11 libxext libxi libxrandr \
             libxcursor libxfixes libxss wayland libxkbcommon libxkbcommon-x11 libdecor \
             systemd-libs pipewire libpulse alsa-lib \

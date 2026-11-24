@@ -114,6 +114,13 @@ wpe_helper="$(find /usr/lib -name WPEWebProcess -path '*wpe-webkit*' -print -qui
 [ -n "$wpe_helper" ] || die "WPE WebKit's helper processes are not installed"
 wpe_dir="${wpe_helper%/*}"
 export DEPLOY_P11KIT=1
+# What WebKit sandboxes its helpers with: quick-sharun wraps bwrap so the
+# bundle's paths exist inside, and points the library at the bundle's bin.
+wpe_sandbox=()
+for tool in bwrap xdg-dbus-proxy; do
+    path="$(command -v "$tool")" || die "$tool, which WPE WebKit sandboxes its helpers with, is not installed"
+    wpe_sandbox+=("$path")
+done
 
 # Mesa without LLVM. NVIDIA's driver is never bundled; sharun loads the host's.
 say "installing Anylinux's mesa"
@@ -142,7 +149,7 @@ dlopened=(
     /usr/lib/libpipewire-0.3.so.0 /usr/lib/libpulse.so.0 /usr/lib/libasound.so.2
     "/usr/lib/$(soname /usr/lib/libavcodec.so)" "/usr/lib/$(soname /usr/lib/libavutil.so)"
     "/usr/lib/$(soname /usr/lib/libWPEWebKit-2.0.so)"
-    "$wpe_dir" /usr/lib/gio/modules/libgiognutls.so
+    "$wpe_dir" /usr/lib/gio/modules/libgiognutls.so "${wpe_sandbox[@]}"
     /usr/lib/libxkbcommon-x11.so.0
     "$qt_plugins"/kf6/kwindowsystem/*.so
 )
@@ -186,6 +193,13 @@ export XDG_CACHE_HOME="$CACHEDIR"
 case "${XDG_CURRENT_DESKTOP:-}" in
     *KDE*) [ -n "${QT_STYLE_OVERRIDE:-}" ] || export QT_STYLE_OVERRIDE=Breeze ;;
 esac
+
+# quick-sharun's path rewrite keeps WebKit's sandbox from mounting /usr/lib*,
+# so its web process reaches the host's GBM backends (NVIDIA's) only via /lib*.
+for dir in /usr/lib*/gbm /usr/lib/*/gbm; do
+    [ -d "${dir#/usr}" ] && GBM_BACKENDS_PATH="${GBM_BACKENDS_PATH:+$GBM_BACKENDS_PATH:}${dir#/usr}"
+done
+[ -z "${GBM_BACKENDS_PATH:-}" ] || export GBM_BACKENDS_PATH
 HOOK
 
 # Libraries an ELF in the bundle links that the bundle doesn't have.
@@ -216,7 +230,8 @@ PY
 # Unused here: Qt's translations (only of Qt's own dialogs; Stud is in English),
 # the QML modules (with Quick Controls, Kirigami and Qt Labs) and PDF support a
 # widget application never loads, Qt's Wayland compositor (Stud is only a client),
-# GStreamer's developer tools, and the WebRTC plugins with what only they link:
+# GStreamer's developer tools, WPE WebKit's demo MiniBrowser, and the WebRTC
+# plugins with what only they link:
 # Roblox's pages make no calls, and voice chat runs in the client.
 before="$(unmet | sort)"
 find "$appdir" -name '*.qm' -delete
@@ -227,7 +242,7 @@ find "$appdir" \( -name 'libQt6QuickControls2*' -o -name 'libQt6QuickDialogs2*' 
     -o -name 'libQt6WaylandCompositor*' -o -name 'libQt6WaylandEglCompositor*' \
     -o -name 'gst-hotdoc-plugins-scanner' -o -name 'gst-completion-helper' \
     -o -name 'libgstnice.so' -o -name 'libgstwebrtc.so' -o -name 'libgstdtls.so' -o -name 'libgstsrtp.so' \
-    -o -name 'libgstsctp.so' \) -delete
+    -o -name 'libgstsctp.so' -o -name 'MiniBrowser' \) -delete
 # What only the files above linked, once nothing left in the bundle needs it.
 for orphan in libnice libsrtp2 libgnutls libleancrypto; do
     aside="$work/aside/$orphan"
@@ -258,6 +273,9 @@ for helper in WPEWebProcess WPENetworkProcess; do
 done
 [ -n "$(find "$appdir" -path '*/gio/modules/libgiognutls.so' -print -quit)" ] ||
     die "no TLS module for WPE WebKit's network process in the bundle"
+for tool in bwrap xdg-dbus-proxy; do
+    [ -e "$appdir/bin/$tool" ] || die "no $tool in the bundle's bin, where WPE WebKit's sandbox looks"
+done
 
 # SquashFS, not DwarFS: AppImageHub, firejail and the classic runtime only mount SquashFS.
 uruntime="$tools/uruntime"
