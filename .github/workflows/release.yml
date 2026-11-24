@@ -702,7 +702,7 @@ jobs:
           CPAK_SHA256: 6dd2b082e408e2cd1aa37ae9dd8c9063b593346e8b27b0571ed5c97fe206df2f
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/cpak" \
+          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/bin/cpak" \
             "https://github.com/Containerpak/cpak/releases/download/$CPAK_VERSION/cpak-linux-amd64"
           echo "$CPAK_SHA256  $RUNNER_TEMP/bin/cpak" | sha256sum -c -
           chmod +x "$RUNNER_TEMP/bin/cpak"

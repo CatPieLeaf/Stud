@@ -19,7 +19,7 @@ commit=$(git -C "$work/rosemary" rev-parse HEAD)
 # Flathub's documented generator.
 python3 -m venv "$work/venv"
 "$work/venv/bin/pip" install -q aiohttp tomlkit
-curl -fsSL -o "$work/flatpak-cargo-generator.py" \
+curl -fsSL --retry 5 --retry-all-errors -o "$work/flatpak-cargo-generator.py" \
     https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
 "$work/venv/bin/python" "$work/flatpak-cargo-generator.py" "$work/rosemary/Cargo.lock" \
     -o "$root/packaging/flatpak/rosemary-cargo-sources.json"

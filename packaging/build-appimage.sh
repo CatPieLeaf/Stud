@@ -66,7 +66,7 @@ ffmpeg_version="$(pacman -Q ffmpeg | awk '{print $2}' | sed 's/^[0-9]*://; s/-[^
 say "rebuilding FFmpeg $ffmpeg_version without encoders"
 mkdir -p "$work"
 rm -rf "$work/ffmpeg-$ffmpeg_version"
-curl -fsSL "https://ffmpeg.org/releases/ffmpeg-$ffmpeg_version.tar.xz" | tar -xJ -C "$work" ||
+curl -fsSL --retry 5 --retry-all-errors "https://ffmpeg.org/releases/ffmpeg-$ffmpeg_version.tar.xz" | tar -xJ -C "$work" ||
     die "ffmpeg.org has no FFmpeg $ffmpeg_version source"
 (
     cd "$work/ffmpeg-$ffmpeg_version"
@@ -81,7 +81,7 @@ curl -fsSL "https://ffmpeg.org/releases/ffmpeg-$ffmpeg_version.tar.xz" | tar -xJ
 avif_version="$(pacman -Q libavif | awk '{print $2}' | sed 's/^[0-9]*://; s/-[^-]*$//')"
 say "rebuilding libavif $avif_version without encoders"
 rm -rf "$work/libavif-$avif_version"
-curl -fsSL "https://github.com/AOMediaCodec/libavif/archive/refs/tags/v$avif_version.tar.gz" | tar -xz -C "$work" ||
+curl -fsSL --retry 5 --retry-all-errors "https://github.com/AOMediaCodec/libavif/archive/refs/tags/v$avif_version.tar.gz" | tar -xz -C "$work" ||
     die "libavif has no v$avif_version source"
 (
     cmake -S "$work/libavif-$avif_version" -B "$work/libavif-$avif_version/build" -G Ninja \
@@ -95,7 +95,7 @@ curl -fsSL "https://github.com/AOMediaCodec/libavif/archive/refs/tags/v$avif_ver
 tools="$work/tools"
 mkdir -p "$tools"
 fetch_tool() {
-    curl -fsSL -o "$tools/$1" "https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/main/useful-tools/$1"
+    curl -fsSL --retry 5 --retry-all-errors -o "$tools/$1" "https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/main/useful-tools/$1"
     chmod +x "$tools/$1"
 }
 fetch_tool quick-sharun.sh
@@ -279,7 +279,7 @@ done
 
 # SquashFS, not DwarFS: AppImageHub, firejail and the classic runtime only mount SquashFS.
 uruntime="$tools/uruntime"
-curl -fsSL -o "$uruntime" \
+curl -fsSL --retry 5 --retry-all-errors -o "$uruntime" \
     "https://github.com/VHSgunzo/uruntime/releases/latest/download/uruntime-appimage-squashfs-$arch"
 chmod +x "$uruntime"
 

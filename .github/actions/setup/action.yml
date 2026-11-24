@@ -34,7 +34,7 @@ runs:
       shell: bash
       run: |
         if ! command -v cargo >/dev/null; then
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+          curl --proto '=https' --tlsv1.2 -sSf --retry 5 --retry-all-errors https://sh.rustup.rs |
             sh -s -- -y --profile minimal --default-toolchain stable
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
         fi
