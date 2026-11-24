@@ -143,7 +143,7 @@ modules:
       - -DCMAKE_BUILD_TYPE=RelWithDebInfo
       - -DSTUD_BUILD_ROSEMARY=OFF
       - -DSTUD_BUILD_TESTS=OFF
-      - -DSTUD_VERSION=2.0.6
+      - -DSTUD_VERSION=2.0.7
       - -DFETCHCONTENT_FULLY_DISCONNECTED=ON
       - -DFETCHCONTENT_SOURCE_DIR_MINIZ=/run/build/stud/deps/miniz
     post-install:
@@ -156,7 +156,7 @@ modules:
       - /share/doc
     sources:
       - type: archive
-        url: https://github.com/CatPieLeaf/Stud/archive/refs/tags/2.0.6.tar.gz
+        url: https://github.com/CatPieLeaf/Stud/archive/refs/tags/2.0.7.tar.gz
         sha256: 797c40e75ef936a7b5111ddc2c132150cc0c5c4aa26fc074ae0f5b7d83259230
       - type: archive
         url: https://github.com/richgel999/miniz/archive/refs/tags/3.1.2.tar.gz
