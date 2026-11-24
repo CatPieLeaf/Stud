@@ -67,6 +67,7 @@
 #include <QPlainTextEdit>
 #include <QSlider>
 #include <QSaveFile>
+#include <QCloseEvent>
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QTabWidget>
@@ -1342,12 +1343,38 @@ QString settings_socket_name() {
 QPointer<SettingsWindow> g_open_window;
 QLocalServer* g_open_server = nullptr;
 
+// Size, place and maximized state, in Qt's own format, beside the Roblox windows' state.
+QString window_geometry_path() {
+    return QString::fromStdString(stud::paths::state_dir()) + QStringLiteral("/settings-window");
+}
+
 }  // namespace
+
+void SettingsWindow::saveWindowGeometry() const {
+    QDir().mkpath(QString::fromStdString(stud::paths::state_dir()));
+    QSaveFile file(window_geometry_path());
+    if (file.open(QIODevice::WriteOnly)) {
+        file.write(saveGeometry());
+        file.commit();
+    }
+}
+
+void SettingsWindow::closeEvent(QCloseEvent* event) {
+    saveWindowGeometry();
+    QWidget::closeEvent(event);
+}
 
 SettingsWindow* SettingsWindow::showSingleton(const QString& status) {
     if (g_open_window.isNull()) {
         g_open_window = new SettingsWindow();
         g_open_window->setAttribute(Qt::WA_DeleteOnClose);
+        if (QFile file(window_geometry_path()); file.open(QIODevice::ReadOnly)) {
+            g_open_window->restoreGeometry(file.readAll());
+        }
+        // Quitting Stud doesn't close its windows, so the one still open saves too.
+        QObject::connect(qApp, &QCoreApplication::aboutToQuit, g_open_window, [window = g_open_window] {
+            if (window != nullptr && window->isVisible()) window->saveWindowGeometry();
+        });
     }
     if (!status.isEmpty()) g_open_window->setStatusMessage(status);
     g_open_window->show();

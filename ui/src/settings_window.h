@@ -53,8 +53,10 @@ private slots:
 protected:
     // Right-click resets the control under the pointer.
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void closeEvent(QCloseEvent* event) override;
 
 private:
+    void saveWindowGeometry() const;
     void loadFromDisk();
     void installResets();
     void setBackgroundFps(int fps);
