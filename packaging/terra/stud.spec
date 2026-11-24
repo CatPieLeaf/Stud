@@ -1,7 +1,5 @@
 %global appid io.github.catpieleaf.Stud
 
-# Installs the release archive Stud's CI builds: the launcher and Rosemary,
-# already compiled.
 %global debug_package %{nil}
 
 Name:           stud
@@ -14,40 +12,23 @@ URL:            https://github.com/CatPieLeaf/Stud
 Source0:        %{url}/releases/download/%{version}/stud-%{version}-x86_64.tar.zst
 Packager:       CatPieLeaf <catpieleaf@proton.me>
 
-# The archive is built for x86_64 only, and the macOS client Stud runs is an
-# x86_64 program Rosemary runs directly.
 ExclusiveArch:  x86_64
 
 BuildRequires:  anda-srpm-macros
 BuildRequires:  zstd
 
 Requires:       hicolor-icon-theme
-# Rosemary opens SDL3 by name rather than linking it, so rpm cannot see it,
-# and it needs 3.4 or newer.
 Requires:       SDL3 >= 3.4.0
-# The Vulkan loader, opened at runtime by the launcher to list the GPUs and
-# by Rosemary to draw.
 Requires:       libvulkan.so.1()(64bit)
-# The launcher checks Roblox's code signature with OpenSSL.
 Requires:       libcrypto.so.3()(64bit)
-# The launcher keeps Roblox's login in the system keyring.
 Requires:       libsecret-1.so.0()(64bit)
-# FFmpeg, opened at runtime for video in experiences: Fedora's own build, or
-# RPM Fusion's full one, which conflicts with it and holds both libraries.
 Requires:       (libavcodec-free or ffmpeg-libs)
 Requires:       (libavutil-free or ffmpeg-libs)
-# GameMode holds the CPU in its performance mode while Roblox runs; Stud
-# turns it on by default.
 Requires:       gamemode
-# GPU names in Settings, and the tray's Copy server link on Wayland; Stud runs without either.
 Recommends:     hwdata
 Recommends:     wl-clipboard
-# A Settings switch, which does not stop Stud from running.
 Suggests:       mangohud
-# Rosemary opens WPE WebKit by name for the client's web pages.
 Requires:       wpewebkit
-# Everything else is found by rpm itself from the ELFs: Qt, libcurl, zlib,
-# libxkbcommon and libudev.
 
 Provides:       bundled(rosemary)
 Provides:       bundled(fidelityfx-fsr1)
@@ -74,23 +55,16 @@ affiliated with, endorsed by or approved by Roblox Corporation.
 %autosetup -c -n %{name}-%{version}
 
 %build
-# Deliberately empty: this package installs the release archive, which CI
-# already built from the tag. Rosemary's build fetches its git dependencies,
-# which a build without network cannot, so it is not rebuilt here.
 
 %install
 cp -a usr %{buildroot}/
 
 %files
-# The whole directory, not a list of it: every vendored notice the build
-# installs belongs here, and a list is what fell behind the ones added
-# since and left rpmbuild failing on unpackaged files.
 %license %{_datadir}/licenses/%{name}/
 %doc %{_datadir}/doc/%{name}/README.md
 %doc %{_datadir}/doc/%{name}/copyright
 %{_bindir}/%{name}
 %{_libexecdir}/%{name}/
-# Stud's entry, and the hidden ones of the Roblox and Studio windows.
 %{_datadir}/applications/%{appid}*.desktop
 %{_metainfodir}/%{appid}.metainfo.xml
 %{_datadir}/mime/packages/%{appid}.xml
