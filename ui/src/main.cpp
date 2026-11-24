@@ -360,10 +360,9 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
         QStringLiteral("ROSEMARY_DECORATIONS"), QStringLiteral("ROSEMARY_MENU"),
         QStringLiteral("ROSEMARY_CONTROL_EDIT_KEYS"), QStringLiteral("ROSEMARY_COMMAND_KEY"),
         QStringLiteral("ROSEMARY_SWAP_INTERVAL"),
-        QStringLiteral("ROSEMARY_SCREEN_REFRESH_RATE"),
         QStringLiteral("ROSEMARY_METAL_PRESENTATION_MODE"), QStringLiteral("ROSEMARY_WINDOW_TITLE"),
         QStringLiteral("ROSEMARY_WINDOW_ICON"), QStringLiteral("ROSEMARY_STATUS_ITEMS"),
-        QStringLiteral("ROSEMARY_BACKGROUND_FPS"), QStringLiteral("ROSEMARY_RENDER_SCALE"),
+        QStringLiteral("ROSEMARY_RENDER_SCALE"),
         QStringLiteral("ROSEMARY_UPSCALER"), QStringLiteral("ROSEMARY_WINDOW_STATE"),
         QStringLiteral("ROSEMARY_WINDOW_ASPECT"),
         QStringLiteral("ROSEMARY_SWAPCHAIN_MAIN_WINDOW_ONLY"), QStringLiteral("ROSEMARY_PROC_TRANSLATED"),
@@ -428,7 +427,9 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
         env.insert(QStringLiteral("ROSEMARY_WINDOW_STATE"), stud::ui::window_state_path(studio));
         env.insert(QStringLiteral("ROSEMARY_NOTIFICATIONS"), stud::ui::banner_socket_path(studio));
     }
-    if (settings.background_fps != stud::config::kBackgroundFpsNoLimit) {
+    // A frame rate set in the environment overrides Settings, for testing at a fixed one.
+    if (settings.background_fps != stud::config::kBackgroundFpsNoLimit &&
+        !env.contains(QStringLiteral("ROSEMARY_BACKGROUND_FPS"))) {
         env.insert(QStringLiteral("ROSEMARY_BACKGROUND_FPS"),
                    QString::number(settings.background_fps));
     }
@@ -443,7 +444,7 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
 
     // VSync off means uncapped: the client paces itself to the refresh rate it
     // is told, so it gets one no display has. OpenGL has no mailbox mode.
-    if (!stud::config::waits_for_refresh(settings)) {
+    if (!stud::config::waits_for_refresh(settings) && !env.contains(QStringLiteral("ROSEMARY_SCREEN_REFRESH_RATE"))) {
         env.insert(QStringLiteral("ROSEMARY_SCREEN_REFRESH_RATE"), QStringLiteral("9999"));
     }
     if (settings.renderer == "opengl") {

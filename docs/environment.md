@@ -26,8 +26,9 @@ the source and is missing from this file, so this list cannot quietly go stale.
 These are Rosemary's own variables, set from Settings when Roblox starts. The
 `ROSEMARY_WINDOW_*`, `ROSEMARY_STATUS_ITEMS`, `ROSEMARY_BACKGROUND_FPS`, `ROSEMARY_NOTIFICATIONS` and `ROSEMARY_REFUSED_PROGRAMS`
 switches come from Stud's fork of Rosemary, [rosemary-stud](https://github.com/CatPieLeaf/rosemary-stud). The
-ones below are always Settings' to decide: set in Stud's own environment, they
-are not passed on. Rosemary's other variables are, so `ROSEMARY_METAL_STATS=1`
+ones below are Settings' to decide, `ROSEMARY_SCREEN_REFRESH_RATE` and
+`ROSEMARY_BACKGROUND_FPS` aside: set in Stud's own environment, the others are
+not passed on. Rosemary's other variables are, so `ROSEMARY_METAL_STATS=1`
 before `stud` logs Rosemary's frame statistics once a second into the session
 log.
 
@@ -38,14 +39,14 @@ log.
 | `ROSEMARY_MENU` | MacOS title bar | `titlebar` with the menu bar, `none` without. |
 | `ROSEMARY_CONTROL_EDIT_KEYS` | the Player | `1`: Ctrl for copy, cut and paste. |
 | `ROSEMARY_COMMAND_KEY` | Studio | `ctrl`: Ctrl as Command in every shortcut, as Studio on Windows has it (Ctrl+S saves, Ctrl+1 to 4 pick tools, Ctrl-click adds to a selection); Super takes Control's place. |
-| `ROSEMARY_SCREEN_REFRESH_RATE` | Presentation | `9999` for the two without VSync: the client paces itself to the refresh rate it is told, so they are uncapped. Roblox's own `FramerateCap` is lifted to match. |
+| `ROSEMARY_SCREEN_REFRESH_RATE` | Presentation | `9999` for the two without VSync: the client paces itself to the refresh rate it is told, so they are uncapped. Roblox's own `FramerateCap` is lifted to match. Set before `stud` or in Settings' environment variables, its value is passed on instead, which caps the client at that frame rate. |
 | `VK_DRIVER_FILES`, `__GL_SHADER_DISK_CACHE_SKIP_CLEANUP` | an NVIDIA GPU | Only NVIDIA's Vulkan driver, and its shader cache never cleaned up. |
 | `ROSEMARY_METAL_PRESENTATION_MODE` | Presentation, on Vulkan | `fifo` (VSync), `fifo_relaxed` (adaptive VSync), `mailbox` (no VSync, no tearing) or `immediate` (no VSync). |
 | `ROSEMARY_SWAP_INTERVAL` | Presentation, on OpenGL | `-1` for adaptive VSync, `0` for the two without VSync; unset for VSync. |
 | `SDL_VIDEO_DRIVER` | Display server | `wayland` on a Wayland desktop, or `x11` when chosen there and XWayland runs. |
 | `ROSEMARY_WINDOW_TITLE`, `ROSEMARY_WINDOW_ICON` | always | `Stud` (Roblox only) and Stud's icon, the red stud for Roblox and the blue one for Studio: the window's title bar names Stud, not the client. |
 | `ROSEMARY_STATUS_ITEMS` | always | `0`: the client's menu bar extras stay out of the tray, beside Stud's own icon. |
-| `ROSEMARY_BACKGROUND_FPS` | Background frame rate | The limit while no Roblox window has focus; unset for Unlimited. |
+| `ROSEMARY_BACKGROUND_FPS` | Background frame rate | The limit while no Roblox window has focus; unset for Unlimited. Set before `stud` or in Settings' environment variables, its value is passed on instead. |
 | `ROSEMARY_WINDOW_STATE` | always | `~/.local/state/stud/window` (`window-studio` for Studio): the main window's size and whether it was maximized or fullscreen, written as it changes and restored at the next start |
 | `ROSEMARY_NOTIFICATIONS` | always | `$XDG_RUNTIME_DIR/stud/notifications` (`notifications-studio` for Studio): a socket the client listens on and shows each notification Stud sends from as a Mac-style banner, used as Notifications decides. |
 | `ROSEMARY_PROC_TRANSLATED` | always | `0`: the client is told it runs on an Intel Mac, as the CPU it sees says, rather than translated by Rosetta on Apple silicon. |
