@@ -59,6 +59,10 @@ log.
 | `MANGOHUD` | MangoHud overlay | `1` when on. |
 | `ROSEMARY_SWAPCHAIN_MAIN_WINDOW_ONLY` | MangoHud overlay | `1` when on: only the main window presents through a Vulkan swapchain, the others by readback, so the overlay is drawn over the main window alone. |
 
+With a launch wrapper, the GPU choice (`VK_DRIVER_FILES`, PRIME offload, `DRI_PRIME`) and
+MangoHud's variables are given to Rosemary alone, through `env` after the wrapper's own
+arguments: a wrapper such as gamescope then picks its GPU itself and doesn't get the overlay.
+
 Variables that make a process load code it did not ask for (`LD_*`, `DYLD_*`,
 Vulkan layer and driver paths, `SDL_DYNAMIC_API`) are removed from the client's
 environment.

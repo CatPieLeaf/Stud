@@ -367,8 +367,11 @@ QProcessEnvironment environment_before_settings() {
     return env;
 }
 
+// `for_wrapper`, when given, gets the same environment less the GPU choice and overlay, which are
+// the game's: a launch wrapper such as gamescope picks its own GPU and isn't the overlay's target.
 QProcessEnvironment client_environment(const stud::config::StudSettings& settings,
-                                       stud::ui::client::Product product) {
+                                       stud::ui::client::Product product,
+                                       QProcessEnvironment* for_wrapper = nullptr) {
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     // Settings owns these; Rosemary's other variables pass through for debugging.
     static const QStringList kFromSettings = {
@@ -476,13 +479,49 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
         env.insert(QStringLiteral("ROSEMARY_METAL_PRESENTATION_MODE"), mode);
     }
 
+    const QProcessEnvironment without_game_only = env;
     apply_gpu_selection(env, settings);
     apply_mangohud(env, settings.mangohud);
+    const QProcessEnvironment with_game_only = env;
     // Last, so Settings' own variables win.
-    for (const auto& [name, value] : settings_environment(settings)) env.insert(name, value);
+    const auto from_settings = settings_environment(settings);
+    for (const auto& [name, value] : from_settings) env.insert(name, value);
     const QString showcase = env.value(QStringLiteral("STUD_SHOWCASE"));
     if (!showcase.isEmpty()) env.insert(QStringLiteral("ROSEMARY_WINDOW_ASPECT"), showcase);
+    if (for_wrapper != nullptr) {
+        *for_wrapper = env;
+        QStringList names = with_game_only.keys() + without_game_only.keys();
+        names.removeDuplicates();
+        for (const QString& name : names) {
+            const bool changed = with_game_only.contains(name) != without_game_only.contains(name) ||
+                                 with_game_only.value(name) != without_game_only.value(name);
+            const bool set_in_settings =
+                std::ranges::any_of(from_settings, [&](const auto& entry) { return entry.first == name; });
+            if (!changed || set_in_settings) continue;
+            if (without_game_only.contains(name)) {
+                for_wrapper->insert(name, without_game_only.value(name));
+            } else {
+                for_wrapper->remove(name);
+            }
+        }
+    }
     return env;
+}
+
+// `env` arguments that turn `outer` into `inner` for the program after them.
+QStringList env_arguments(const QProcessEnvironment& outer, const QProcessEnvironment& inner) {
+    QStringList unset;
+    QStringList assign;
+    QStringList names = outer.keys() + inner.keys();
+    names.removeDuplicates();
+    for (const QString& name : names) {
+        if (!inner.contains(name)) {
+            if (outer.contains(name)) unset << QStringLiteral("-u") << name;
+        } else if (!outer.contains(name) || outer.value(name) != inner.value(name)) {
+            assign << name + QLatin1Char('=') + inner.value(name);
+        }
+    }
+    return unset + assign;
 }
 
 // flags.json as ClientAppSettings.json. A malformed file is reported and skipped.
@@ -937,15 +976,21 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     QObject::connect(g_activity, &stud::ui::GameActivity::leftGame, qApp,
                      [] { stud::ui::terminate_stud_session(); }, Qt::QueuedConnection);
     g_client = new QProcess(qApp);
+    QProcessEnvironment wrapper_env;
+    const QProcessEnvironment client_env = client_environment(settings, product, &wrapper_env);
     if (wrapper.isEmpty()) {
         g_client->setProgram(rosemary);
         g_client->setArguments(args);
+        g_client->setProcessEnvironment(client_env);
     } else {
         std::printf("stud: Roblox starts through %s\n", qPrintable(wrapper.join(QLatin1Char(' '))));
+        const QStringList game_only = env_arguments(wrapper_env, client_env);
         g_client->setProgram(wrapper.takeFirst());
-        g_client->setArguments(wrapper + QStringList{rosemary} + args);
+        g_client->setArguments(wrapper +
+                               (game_only.isEmpty() ? QStringList{} : QStringList{QStringLiteral("env")} + game_only) +
+                               QStringList{rosemary} + args);
+        g_client->setProcessEnvironment(wrapper_env);
     }
-    g_client->setProcessEnvironment(client_environment(settings, product));
     g_client->setStandardInputFile(QProcess::nullDevice());
     if (deep_link) g_deep_link = deep_link->toUtf8();
     g_client->setProcessChannelMode(QProcess::ForwardedChannels);
