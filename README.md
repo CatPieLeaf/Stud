@@ -1,5 +1,5 @@
 <div align="center">
-  <img src=".github/logo.png" width="420"></img>
+  <img src=".github/logo.webp" width="420"></img>
   <br/>
 </div>
 
@@ -29,14 +29,14 @@
 <br>
 
 <p align="center">
-  <a href="https://github.com/CatPieLeaf/Stud/releases"><img src=".github/get-it-on-github.png" alt="Get it on GitHub" height="70" align="middle"></a>
-  <a href="https://cpak.it/store/apps/stud"><img src=".github/get-it-on-cpak.png" alt="Get it on cpak" height="70" align="middle"></a>
-  <a href="https://flathub.org/en/apps/io.github.catpieleaf.Stud"><img src=".github/get-it-on-flathub.png" alt="Get it on Flathub" height="47" align="middle"></a>
+  <a href="https://github.com/CatPieLeaf/Stud/releases"><img src=".github/get-it-on-github.webp" alt="Get it on GitHub" height="70" align="middle"></a>
+  <a href="https://cpak.it/store/apps/stud"><img src=".github/get-it-on-cpak.webp" alt="Get it on cpak" height="70" align="middle"></a>
+  <a href="https://flathub.org/en/apps/io.github.catpieleaf.Stud"><img src=".github/get-it-on-flathub.webp" alt="Get it on Flathub" height="47" align="middle"></a>
 </p>
 
 <br>
 <div align="center">
-  <h4 id="screenshots"><img src=".github/headers/screenshots.png" width="800" alt="Screenshots"></h4>
+  <h4 id="screenshots"><img src=".github/headers/screenshots.webp" width="800" alt="Screenshots"></h4>
 </div>
 
 <table align="center">
@@ -58,7 +58,7 @@
 <br>
 
 <div align="center">
-  <h4 id="why"><img src=".github/headers/why.png" width="800" alt="Why?"></h4>
+  <h4 id="why"><img src=".github/headers/why.webp" width="800" alt="Why?"></h4>
 </div>
 
 I wanted to play Roblox on Linux without it falling over. Sober kept crashing on my NVIDIA machine, and I wanted more control than it gave me: picking my own APK, deciding when Roblox updates, and no OTAs I can't see or turn off.
@@ -70,7 +70,7 @@ It's a one-person project, built because I wanted a launcher that stays out of t
 <br>
 
 <div align="center">
-  <h4 id="features"><img src=".github/headers/features.png" width="800" alt="Features"></h4>
+  <h4 id="features"><img src=".github/headers/features.webp" width="800" alt="Features"></h4>
 </div>
 
  - Runs the **real** Roblox macOS client, unpatched: the desktop client, with desktop graphics
@@ -97,7 +97,7 @@ It's a one-person project, built because I wanted a launcher that stays out of t
 <br>
 
 <div align="center">
-  <h4 id="contributions"><img src=".github/headers/contributions.png" width="800" alt="Contributions"></h4>
+  <h4 id="contributions"><img src=".github/headers/contributions.webp" width="800" alt="Contributions"></h4>
 </div>
 
 **Contributions of any kind are welcome**: code, bug reports, a log from a machine that isn't ours, a GPU we've never tested on, a screenshot of something rendering wrong. Open an [issue](https://github.com/CatPieLeaf/Stud/issues) and say what happened; the tray's **Export logs** puts every session in one file for you.
@@ -105,7 +105,7 @@ It's a one-person project, built because I wanted a launcher that stays out of t
 <br>
 
 <div align="center">
-  <h4 id="not"><img src=".github/headers/whatstudisnot.png" width="800" alt="What Stud is not"></h4>
+  <h4 id="not"><img src=".github/headers/whatstudisnot.webp" width="800" alt="What Stud is not"></h4>
 </div>
 
  - **Not affiliated with Roblox.** Stud is an independent project, not endorsed, supported or approved by Roblox Corporation.
@@ -117,7 +117,7 @@ It's a one-person project, built because I wanted a launcher that stays out of t
 <br>
 
 <div align="center">
-  <h4 id="how"><img src=".github/headers/howitworks.png" width="800" alt="How it works"></h4>
+  <h4 id="how"><img src=".github/headers/howitworks.webp" width="800" alt="How it works"></h4>
 </div>
 
 | process | does |
@@ -130,7 +130,7 @@ The launcher stays for the whole session as the client's parent, so there is alw
 <br>
 
 <div align="center">
-  <h4 id="building"><img src=".github/headers/building.png" width="800" alt="Building"></h4>
+  <h4 id="building"><img src=".github/headers/building.webp" width="800" alt="Building"></h4>
 </div>
 
 ### 1 - Install the system packages
@@ -206,7 +206,7 @@ Every debugging switch is listed in [`docs/environment.md`](docs/environment.md)
 <br>
 
 <div align="center">
-  <h4 id="installation"><img src=".github/headers/installation.png" width="800" alt="Installation"></h4>
+  <h4 id="installation"><img src=".github/headers/installation.webp" width="800" alt="Installation"></h4>
 </div>
 
 Pre-built packages are on the [Releases](https://github.com/CatPieLeaf/Stud/releases) page.
@@ -353,7 +353,7 @@ chmod +x Stud-x86_64.AppImage
 <br>
 
 <div align="center">
-  <h4 id="files"><img src=".github/headers/wherethingslive.png" width="800" alt="Where things live"></h4>
+  <h4 id="files"><img src=".github/headers/wherethingslive.webp" width="800" alt="Where things live"></h4>
 </div>
 
 | path | what |
@@ -368,7 +368,7 @@ In a Flatpak these live under the sandbox's own home, so `~/.config/stud/` becom
 <br>
 
 <div align="center">
-  <h4 id="credits"><img src=".github/headers/credits.png" width="800" alt="Credits"></h4>
+  <h4 id="credits"><img src=".github/headers/credits.webp" width="800" alt="Credits"></h4>
 </div>
 
 Roblox is a trademark of Roblox Corporation. Stud is an independent, non-commercial project and is not affiliated with, endorsed by or supported by them.
@@ -390,5 +390,5 @@ Stud itself is **AGPLv3**, with one additional permission under section 7 ([`LIC
 ---
 
 <div align="center">
-  <img src=".github/stud-cube.gif" width="196" alt="Stud's stud, spinning"></img>
+  <img src=".github/stud-cube.webp" width="196" alt="Stud's stud, spinning"></img>
 </div>
