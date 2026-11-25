@@ -306,6 +306,7 @@ const char* const kQuotes[] = {
     QT_TRANSLATE_NOOP("stud::ui::Chooser", "Oof!"),
     QT_TRANSLATE_NOOP("stud::ui::Chooser", "Powered by Studs. Obviously ;)"),
     QT_TRANSLATE_NOOP("stud::ui::Chooser", "It works on my machine!"),
+    //: A censored swear; keep the hashes.
     QT_TRANSLATE_NOOP("stud::ui::Chooser", "## ##### ## ## #######!"),
     QT_TRANSLATE_NOOP("stud::ui::Chooser", "This message has been rephrased."),
     QT_TRANSLATE_NOOP("stud::ui::Chooser", "Hello World!"),
@@ -324,6 +325,7 @@ const char* const kQuotes[] = {
     QT_TRANSLATE_NOOP("stud::ui::Chooser", "Mmm, cheeseburger!"),
     QT_TRANSLATE_NOOP("stud::ui::Chooser", "Do not step on the red bricks!"),
     QT_TRANSLATE_NOOP("stud::ui::Chooser", "Yum!"),
+    //: A Roblox chat emote; leave it as it is.
     QT_TRANSLATE_NOOP("stud::ui::Chooser", "/e dance2"),
     QT_TRANSLATE_NOOP("stud::ui::Chooser", "You have been kicked from this experience!"),
     QT_TRANSLATE_NOOP("stud::ui::Chooser", "Click here for free Tix!"),
@@ -333,6 +335,7 @@ const char* const kQuotes[] = {
     QT_TRANSLATE_NOOP("stud::ui::Chooser", "Nom nom nom!"),
     QT_TRANSLATE_NOOP("stud::ui::Chooser", "It's raining tacos!"),
     QT_TRANSLATE_NOOP("stud::ui::Chooser", "Do not play at 3 AM!"),
+    //: A Roblox chat command; leave it as it is.
     QT_TRANSLATE_NOOP("stud::ui::Chooser", ":btools me"),
 };
 }  // namespace

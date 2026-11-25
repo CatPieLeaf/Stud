@@ -41,6 +41,7 @@
     </message>
     <message>
         <source>## ##### ## ## #######!</source>
+        <extracomment>A censored swear; keep the hashes.</extracomment>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -113,6 +114,7 @@
     </message>
     <message>
         <source>/e dance2</source>
+        <extracomment>A Roblox chat emote; leave it as it is.</extracomment>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -149,6 +151,7 @@
     </message>
     <message>
         <source>:btools me</source>
+        <extracomment>A Roblox chat command; leave it as it is.</extracomment>
         <translation type="unfinished"></translation>
     </message>
     <message>
