@@ -152,7 +152,7 @@ StudSettings load_settings(const std::string& path) {
     // Any locale a catalogue may be for; one that isn't installed stays English.
     std::string language;
     if (read_text("language", language)) {
-        const bool shaped = !language.empty() && language.size() <= 32 &&
+        const bool shaped = !language.empty() &&
                             std::all_of(language.begin(), language.end(), [](char c) {
                                 return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
                                        (c >= '0' && c <= '9') || c == '_' || c == '-';
