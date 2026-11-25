@@ -11,6 +11,7 @@
   <img src="https://img.shields.io/badge/platform-linux-white?logo=linux&logoColor=000000&style=for-the-badge&color=f5bd20&labelColor=FDEFC7" alt="Platform">
   <img src="https://img.shields.io/github/downloads/CatPieLeaf/Stud/total?label=Downloads&logo=github&logoColor=000000&style=for-the-badge&color=179299&labelColor=D3F6F8" alt="Downloads">
   <a href="https://discord.gg/6dmBTA4cJw"><img src="https://img.shields.io/discord/1568340222557687828?label=discord&logo=discord&style=for-the-badge&color=5965f1&labelColor=D6D9FC" alt="Discord"></a>
+  <a href="https://hosted.weblate.org/engage/stud/"><img src="https://img.shields.io/weblate/progress/stud?server=https%3A%2F%2Fhosted.weblate.org&label=translated&logo=weblate&logoColor=000000&style=for-the-badge&color=2eccaa&labelColor=D5F5EE" alt="Translated"></a>
 </p>
 
   <p align="center">Play Roblox on Linux: the real macOS client, running on your desktop.</p>
@@ -101,6 +102,12 @@ It's a one-person project, built because I wanted a launcher that stays out of t
 </div>
 
 **Contributions of any kind are welcome**: code, bug reports, a log from a machine that isn't ours, a GPU we've never tested on, a screenshot of something rendering wrong. Open an [issue](https://github.com/CatPieLeaf/Stud/issues) and say what happened; the tray's **Export logs** puts every session in one file for you.
+
+Translations happen on [Weblate](https://hosted.weblate.org/engage/stud/): pick your language there, no GitHub account or code needed.
+
+<p align="center">
+  <a href="https://hosted.weblate.org/engage/stud/"><img src="https://hosted.weblate.org/widget/stud/stud/287x66-black.png" alt="Translation status"></a>
+</p>
 
 <br>
 
