@@ -143,21 +143,33 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/${STUD_APP_ID}.metainfo.xml
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/stud-mime.xml"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/mime/packages"
         RENAME "${STUD_APP_ID}.xml")
+# Flathub wants its icon grid's margins, which shrink the stud; a Flatpak installs into /app.
+if(CMAKE_INSTALL_PREFIX STREQUAL "/app")
+    set(stud_icons "${CMAKE_CURRENT_SOURCE_DIR}/packaging/icons/flathub")
+    set(stud_icon_512 "${stud_icons}/512.png")
+    set(stud_icon_player "${stud_icons}/player.png")
+    set(stud_icon_studio "${stud_icons}/studio.png")
+else()
+    set(stud_icons "${CMAKE_CURRENT_SOURCE_DIR}/packaging/icons")
+    set(stud_icon_512 "${CMAKE_CURRENT_SOURCE_DIR}/packaging/stud.png")
+    set(stud_icon_player "${CMAKE_CURRENT_SOURCE_DIR}/ui/resources/studred.png")
+    set(stud_icon_studio "${CMAKE_CURRENT_SOURCE_DIR}/ui/resources/studblu.png")
+endif()
 # Pre-rendered sizes: some things that draw small icons, title bars among them,
 # don't scale the 512 one down when their size is missing.
 foreach(icon_size 16 24 32 48 64 128 256)
-    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/icons/${icon_size}.png"
+    install(FILES "${stud_icons}/${icon_size}.png"
             DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/${icon_size}x${icon_size}/apps"
             RENAME "${STUD_APP_ID}.png")
 endforeach()
 # The red and blue studs of the Player and Studio actions.
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/ui/resources/studred.png"
+install(FILES "${stud_icon_player}"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/512x512/apps"
         RENAME "${STUD_APP_ID}-player.png")
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/ui/resources/studblu.png"
+install(FILES "${stud_icon_studio}"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/512x512/apps"
         RENAME "${STUD_APP_ID}-studio.png")
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/stud.png"
+install(FILES "${stud_icon_512}"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/512x512/apps"
         RENAME "${STUD_APP_ID}.png")
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
