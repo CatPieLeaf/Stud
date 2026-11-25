@@ -16,6 +16,142 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Also known as &quot;Roblox opener&quot;!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Not a virus, I swear!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Press Alt+F4 for free Robux! (Just kidding!)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Oof!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Powered by Studs. Obviously ;)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>It works on my machine!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>## ##### ## ## #######!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This message has been rephrased.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hello World!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Built stud by stud!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Now with 50% more studs!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Error 404: Roblox not found.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Wayland compatible!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Linux is better than Windows ;)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>&quot;I use Arch btw!&quot;</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Did you know Xenia?</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No telemetry included!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Tux approved!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>I&apos;m root, I know what I&apos;m doing!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No Penguins were Harmed!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>IT&apos;S FREE!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Mmm, cheeseburger!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Do not step on the red bricks!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Yum!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>/e dance2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>You have been kicked from this experience!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Click here for free Tix!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Pizza!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Can I have free Robux?</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>1x1x1x1 is watching!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Nom nom nom!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>It&apos;s raining tacos!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Do not play at 3 AM!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>:btools me</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>By %1</source>
         <translation type="unfinished"></translation>
     </message>
@@ -249,6 +385,70 @@
     <name>stud::ui::LoadingScreen</name>
     <message>
         <source>Cancel</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Preparing Roblox...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Spawning noobs...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Invoking guests...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Measuring studs...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Harvesting Tix...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Anchoring parts...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Warming up the baseplate...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Teaching noobs to jump...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Waking the server up...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Spinning the stud...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Finding the last checkpoint...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Checking under the map...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Taming the zombies...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Gluing the decals...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Saying hello to the server...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Almost there...</source>
         <translation type="unfinished"></translation>
     </message>
 </context>

@@ -3,7 +3,6 @@
 #include "cube_view.h"
 
 #include <QCoreApplication>
-#include <QFile>
 #include <QLabel>
 #include <QProgressBar>
 #include <QPushButton>
@@ -106,15 +105,32 @@ void raise() {
 
 }  // namespace
 
+// Rotated every two seconds while Roblox starts.
+const char* const kLoadingLines[] = {
+    QT_TRANSLATE_NOOP("stud::ui::LoadingScreen", "Preparing Roblox..."),
+    QT_TRANSLATE_NOOP("stud::ui::LoadingScreen", "Spawning noobs..."),
+    QT_TRANSLATE_NOOP("stud::ui::LoadingScreen", "Invoking guests..."),
+    QT_TRANSLATE_NOOP("stud::ui::LoadingScreen", "Measuring studs..."),
+    QT_TRANSLATE_NOOP("stud::ui::LoadingScreen", "Harvesting Tix..."),
+    QT_TRANSLATE_NOOP("stud::ui::LoadingScreen", "Anchoring parts..."),
+    QT_TRANSLATE_NOOP("stud::ui::LoadingScreen", "Warming up the baseplate..."),
+    QT_TRANSLATE_NOOP("stud::ui::LoadingScreen", "Teaching noobs to jump..."),
+    QT_TRANSLATE_NOOP("stud::ui::LoadingScreen", "Waking the server up..."),
+    QT_TRANSLATE_NOOP("stud::ui::LoadingScreen", "Spinning the stud..."),
+    QT_TRANSLATE_NOOP("stud::ui::LoadingScreen", "Finding the last checkpoint..."),
+    QT_TRANSLATE_NOOP("stud::ui::LoadingScreen", "Checking under the map..."),
+    QT_TRANSLATE_NOOP("stud::ui::LoadingScreen", "Taming the zombies..."),
+    QT_TRANSLATE_NOOP("stud::ui::LoadingScreen", "Gluing the decals..."),
+    QT_TRANSLATE_NOOP("stud::ui::LoadingScreen", "Saying hello to the server..."),
+    QT_TRANSLATE_NOOP("stud::ui::LoadingScreen", "Almost there..."),
+};
+
 void show_loading_lines(std::function<void()> on_cancel) {
     Screen& s = screen();
     s.on_cancel = std::move(on_cancel);
     if (s.lines.isEmpty()) {
-        QFile file(QStringLiteral(":/loading_lines.txt"));
-        if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            for (const QString& line : QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'))) {
-                if (!line.trimmed().isEmpty()) s.lines.append(line.trimmed());
-            }
+        for (const char* line : kLoadingLines) {
+            s.lines.append(QCoreApplication::translate("stud::ui::LoadingScreen", line));
         }
     }
     s.lines_on = true;

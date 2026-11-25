@@ -18,7 +18,6 @@
 #include <QFrame>
 #include <QProcess>
 #include <QRandomGenerator>
-#include <QFile>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QJsonDocument>
@@ -301,6 +300,44 @@ bool rpm_without_wpe() {
 
 }  // namespace
 
+// Shown in rotation on the welcome page, translated like any other string.
+const char* const kQuotes[] = {
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Also known as \"Roblox opener\"!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Not a virus, I swear!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Press Alt+F4 for free Robux! (Just kidding!)"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Oof!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Powered by Studs. Obviously ;)"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "It works on my machine!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "## ##### ## ## #######!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "This message has been rephrased."),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Hello World!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Built stud by stud!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Now with 50% more studs!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Error 404: Roblox not found."),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Wayland compatible!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Linux is better than Windows ;)"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "\"I use Arch btw!\""),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Did you know Xenia?"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "No telemetry included!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Tux approved!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "I'm root, I know what I'm doing!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "No Penguins were Harmed!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "IT'S FREE!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Mmm, cheeseburger!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Do not step on the red bricks!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Yum!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "/e dance2"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "You have been kicked from this experience!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Click here for free Tix!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Pizza!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Can I have free Robux?"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "1x1x1x1 is watching!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Nom nom nom!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "It's raining tacos!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", "Do not play at 3 AM!"),
+    QT_TRANSLATE_NOOP("stud::ui::Chooser", ":btools me"),
+};
+
 std::optional<client::Product> choose_product() {
     QDialog dialog;
     dialog.setWindowTitle(QStringLiteral("Stud"));
@@ -362,11 +399,8 @@ std::optional<client::Product> choose_product() {
     layout->addLayout(top);
 
     QStringList quotes;
-    QFile file(QStringLiteral(":/quotes.txt"));
-    if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        for (const QString& line : QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'))) {
-            if (!line.trimmed().isEmpty()) quotes.append(line.trimmed());
-        }
+    for (const char* quote : kQuotes) {
+        quotes.append(QCoreApplication::translate("stud::ui::Chooser", quote));
     }
     // One extra fact with an NVIDIA GPU, like the About cube.
     {

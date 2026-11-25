@@ -9,7 +9,7 @@ namespace stud::ui {
 
 // The startup window: spinning stud, a line, a progress bar and Cancel.
 
-// Rotates resources/loading_lines.txt every two seconds; Cancel closes and calls on_cancel.
+// Rotates the loading lines every two seconds; Cancel closes and calls on_cancel.
 void show_loading_lines(std::function<void()> on_cancel);
 
 bool loading_cancelled();
