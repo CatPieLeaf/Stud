@@ -48,11 +48,19 @@ QString pick(const QStringList& wanted, const QStringList& have) {
     return {};
 }
 
-// Qt's own catalogue for the code, which may only be there as a variant of it.
+// Qt's own catalogue for a language, as the exact variant or the one this desktop
+// uses for it: pt may take pt_BR, never de.
 bool load_qt_catalogue(QTranslator& translator, const QString& code) {
+    const QString language = code.section(QLatin1Char('_'), 0, 0);
+    QStringList candidates{code};
+    for (const QString& tag : wanted_codes("system")) {
+        if (tag.section(QLatin1Char('_'), 0, 0) == language && !candidates.contains(tag)) {
+            candidates << tag;
+        }
+    }
+    if (!candidates.contains(language)) candidates << language;
+
     const QString directory = QLibraryInfo::path(QLibraryInfo::TranslationsPath);
-    QStringList candidates = wanted_codes(code.toStdString());
-    for (const QString& extra : wanted_codes("system")) candidates << extra;
     for (const QString& candidate : candidates) {
         const QString path = directory + QStringLiteral("/qtbase_%1.qm").arg(candidate);
         if (translator.load(path)) return true;
