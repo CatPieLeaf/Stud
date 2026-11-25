@@ -37,11 +37,11 @@
   <screenshots>
     <screenshot type="default">
       <caption>Roblox Player running on Stud</caption>
-      <image type="source" width="1666" height="1043">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/home.png</image>
+      <image type="source" width="1666" height="1043">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/flathub/home.png</image>
     </screenshot>
     <screenshot>
       <caption>Roblox Studio running on Stud</caption>
-      <image type="source" width="1763" height="1098">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/studio.png</image>
+      <image type="source" width="1763" height="1098">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/flathub/studio.png</image>
     </screenshot>
     <screenshot>
       <caption>The "Tunneler" game on Roblox</caption>
@@ -57,11 +57,11 @@
     </screenshot>
     <screenshot>
       <caption>Stud's welcome screen</caption>
-      <image type="source" width="644" height="524">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/welcome.png</image>
+      <image type="source" width="644" height="524">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/flathub/welcome.png</image>
     </screenshot>
     <screenshot>
       <caption>Stud's settings</caption>
-      <image type="source" width="1007" height="781">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/settings.png</image>
+      <image type="source" width="1007" height="781">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/flathub/settings.png</image>
     </screenshot>
   </screenshots>
 
