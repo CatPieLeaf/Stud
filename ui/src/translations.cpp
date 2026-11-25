@@ -28,11 +28,12 @@ QStringList wanted_codes(const std::string& language) {
     QStringList wanted;
     if (language == "system") {
         for (const QString& tag : QLocale::system().uiLanguages()) {
-            wanted << QString(tag).replace(QLatin1Char('-'), QLatin1Char('_'));
+            wanted << tag;
         }
     } else {
         wanted << QString::fromStdString(language);
     }
+    for (QString& code : wanted) code.replace(QLatin1Char('-'), QLatin1Char('_'));
     for (const QString& code : QStringList(wanted)) {
         const qsizetype separator = code.indexOf(QLatin1Char('_'));
         if (separator > 0) wanted << code.left(separator);

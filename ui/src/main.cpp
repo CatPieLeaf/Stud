@@ -1320,8 +1320,8 @@ int main(int argc, char** argv) {
     QGuiApplication::setDesktopFileName(QStringLiteral(STUD_APP_ID));
     QCoreApplication::setApplicationName(QStringLiteral("Stud"));
 
-    // Before anything draws, the welcome page's quote and the tray's notifications
-    // included. A settings file that doesn't load is reported later; English until then.
+    // Before anything draws, so the welcome page and the tray menu are translated too.
+    // A settings file that doesn't load is reported later; English until then.
     std::string language = "system";
     try {
         language = stud::config::load_settings(stud::config::default_config_path()).language;
