@@ -4,6 +4,7 @@
 
 #include "stud/stud_paths.h"
 
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
@@ -262,7 +263,7 @@ bool apply(const client::Build& build, client::Product product, QString* error) 
         if (!applier.put(relative, path)) {
             applier.finish();
             restore(build);
-            *error = QStringLiteral("could not apply the customization file %1").arg(relative);
+            *error = QCoreApplication::translate("stud::ui::customization", "could not apply the customization file %1").arg(relative);
             return false;
         }
     }
@@ -297,14 +298,14 @@ bool apply(const client::Build& build, client::Product product, QString* error) 
             if (!applier.put(relative, QString(), &data)) {
                 applier.finish();
                 restore(build);
-                *error = QStringLiteral("could not point %1 at the custom font").arg(name);
+                *error = QCoreApplication::translate("stud::ui::customization", "could not point %1 at the custom font").arg(name);
                 return false;
             }
         }
     }
     if (!applier.finish()) {
         restore(build);
-        *error = QStringLiteral("could not record the applied customizations");
+        *error = QCoreApplication::translate("stud::ui::customization", "could not record the applied customizations");
         return false;
     }
     return true;
@@ -322,7 +323,7 @@ bool use_file(Part part, const QString& file, QString* error) {
     }
     for (const QString& name : targets) {
         if (!copy_over(file, dir + QLatin1Char('/') + name)) {
-            *error = QStringLiteral("could not copy %1 into the customizations folder").arg(QFileInfo(file).fileName());
+            *error = QCoreApplication::translate("stud::ui::customization", "could not copy %1 into the customizations folder").arg(QFileInfo(file).fileName());
             return false;
         }
     }
@@ -333,7 +334,7 @@ bool use_file(Part part, const QString& file, QString* error) {
 bool recolour(Part part, const QColor& colour, QString* error) {
     const auto build = client::installed(client::Product::Player);
     if (!build) {
-        *error = QStringLiteral("Roblox is not installed yet; open it once first.");
+        *error = QCoreApplication::translate("stud::ui::customization", "Roblox is not installed yet; open it once first.");
         return false;
     }
     const PartFiles p = files_of(part);
@@ -359,7 +360,7 @@ bool recolour(Part part, const QColor& colour, QString* error) {
         }
         QDir().mkpath(dir);
         if (!image.save(dir + QLatin1Char('/') + name, "PNG")) {
-            *error = QStringLiteral("could not write %1").arg(name);
+            *error = QCoreApplication::translate("stud::ui::customization", "could not write %1").arg(name);
             return false;
         }
     }
@@ -387,24 +388,30 @@ bool present(Part part) {
 }
 
 Applied applied(Part part) {
-    if (!present(part)) return {QStringLiteral("Roblox's default"), {}};
+    if (!present(part)) {
+        return {QCoreApplication::translate("stud::ui::customization", "Roblox's default"), {}};
+    }
     // Files put in by hand or by an import have no recorded source.
     const QJsonObject source = read_sources().value(source_key(part)).toObject();
     if (source.contains(QStringLiteral("file"))) return {source.value(QStringLiteral("file")).toString(), {}};
     if (source.contains(QStringLiteral("colour"))) {
-        return {QStringLiteral("Recoloured"), QColor(source.value(QStringLiteral("colour")).toString())};
+        return {QCoreApplication::translate("stud::ui::customization", "Recoloured"),
+                QColor(source.value(QStringLiteral("colour")).toString())};
     }
     if (source.contains(QStringLiteral("offer"))) {
-        return {QStringLiteral("%1's %2").arg(source.value(QStringLiteral("source")).toString(),
-                                              source.value(QStringLiteral("offer")).toString()),
+        return {QCoreApplication::translate("stud::ui::customization", "%1's %2")
+                    .arg(source.value(QStringLiteral("source")).toString(),
+                         source.value(QStringLiteral("offer")).toString()),
                 {}};
     }
     if (source.contains(QStringLiteral("classic"))) {
         const QString variant = source.value(QStringLiteral("classic")).toString();
-        return {variant.isEmpty() ? QStringLiteral("Bloxstrap's classic") : QStringLiteral("Bloxstrap's %1").arg(variant),
+        return {variant.isEmpty()
+                    ? QCoreApplication::translate("stud::ui::customization", "Bloxstrap's classic")
+                    : QCoreApplication::translate("stud::ui::customization", "Bloxstrap's %1").arg(variant),
                 {}};
     }
-    return {QStringLiteral("Custom files"), {}};
+    return {QCoreApplication::translate("stud::ui::customization", "Custom files"), {}};
 }
 
 QImage image(Part part) {
@@ -639,7 +646,7 @@ std::unique_ptr<QTemporaryDir> unpack(const QByteArray& archive, QString* error)
     auto dir = std::make_unique<QTemporaryDir>();
     QFile zip(dir->filePath(QStringLiteral("download.zip")));
     if (!dir->isValid() || !zip.open(QIODevice::WriteOnly) || zip.write(archive) != archive.size()) {
-        *error = QStringLiteral("could not keep the download");
+        *error = QCoreApplication::translate("stud::ui::customization", "could not keep the download");
         return {};
     }
     zip.close();
@@ -735,7 +742,9 @@ void set_old_login_screen(bool on, std::function<void(const QString& error)> don
     if (!on) return done(QString());
     // The archive's names are the Windows client's; they're matched to this one's.
     const auto build = client::installed(client::Product::Player);
-    if (!build) return done(QStringLiteral("Roblox is not installed yet; open it once first."));
+    if (!build)
+        return done(
+            QCoreApplication::translate("stud::ui::customization", "Roblox is not installed yet; open it once first."));
     fetch_catalogue([build = *build, dir, done](const QJsonArray& mods, const QString& error) {
         QUrl archive;
         for (const QJsonValue value : mods) {
@@ -743,7 +752,10 @@ void set_old_login_screen(bool on, std::function<void(const QString& error)> don
                 archive = QUrl(value.toObject().value(QStringLiteral("download")).toString());
             }
         }
-        if (archive.isEmpty()) return done(error.isEmpty() ? QStringLiteral("Froststrap no longer offers it") : error);
+        if (archive.isEmpty())
+            return done(error.isEmpty()
+                            ? QCoreApplication::translate("stud::ui::customization", "Froststrap no longer offers it")
+                            : error);
         get(archive, [build, dir, done](const QByteArray& body, const QString& failed) {
             if (!failed.isEmpty()) return done(failed);
             QString unpack_error;

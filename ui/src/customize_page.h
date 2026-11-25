@@ -11,6 +11,8 @@ namespace stud::ui {
 // each has now. Redraws whenever it is shown, as Roblox may have installed or a
 // crash set files aside since.
 class CustomizePage : public QWidget {
+    Q_OBJECT
+
 public:
     // `import` brings in another bootstrapper's customizations.
     CustomizePage(std::function<void()> import, QWidget* parent = nullptr);

@@ -63,6 +63,70 @@
     </message>
 </context>
 <context>
+    <name>GameActivity</name>
+    <message>
+        <location filename="../src/game_activity.cpp" line="275"/>
+        <source>Server region</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/game_activity.cpp" line="358"/>
+        <location filename="../src/game_activity.cpp" line="364"/>
+        <source>Developing a place</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/game_activity.cpp" line="359"/>
+        <source>In Roblox Studio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/game_activity.cpp" line="361"/>
+        <source>Idling</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/game_activity.cpp" line="365"/>
+        <source>Developing %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/game_activity.cpp" line="372"/>
+        <source>Editing a script</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/game_activity.cpp" line="373"/>
+        <source>Roblox Studio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/game_activity.cpp" line="380"/>
+        <source>In the Roblox app</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/game_activity.cpp" line="388"/>
+        <source>In a game</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/game_activity.cpp" line="394"/>
+        <source>by %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/game_activity.cpp" line="404"/>
+        <source>Join server</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/game_activity.cpp" line="407"/>
+        <source>See game page</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>LoadingScreen</name>
     <message>
         <location filename="../src/loading_screen.cpp" line="82"/>
@@ -270,6 +334,59 @@ The log for this session has been written and can be exported.</source>
     <message>
         <location filename="../src/main.cpp" line="1324"/>
         <source>Stud 1.x&apos;s Android files are gone (%1 freed). Your settings, FFlags and customizations were kept. Log in to Roblox again in the new client.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>UpdateCheck</name>
+    <message>
+        <location filename="../src/update_check.cpp" line="69"/>
+        <source>Stud could not update</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/update_check.cpp" line="88"/>
+        <source>The release&apos;s checksum could not be read.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/update_check.cpp" line="103"/>
+        <source>%1 is not writable.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/update_check.cpp" line="106"/>
+        <source>Updating Stud</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/update_check.cpp" line="107"/>
+        <source>Downloading Stud %1.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/update_check.cpp" line="127"/>
+        <source>The download did not match the release.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/update_check.cpp" line="128"/>
+        <source>The download did not finish.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/update_check.cpp" line="137"/>
+        <source>The new AppImage could not replace %1.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/update_check.cpp" line="143"/>
+        <source>Stud updated</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/update_check.cpp" line="144"/>
+        <source>Restart Stud to use version %1.</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -1479,6 +1596,206 @@ Finding where a server is asks ipwho.is about the server&apos;s address, never y
     <message>
         <location filename="../src/tray.cpp" line="232"/>
         <source>By %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>stud::ui::client</name>
+    <message>
+        <location filename="../src/mac_client.cpp" line="163"/>
+        <source>the download is not a readable zip</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mac_client.cpp" line="178"/>
+        <source>cancelled</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mac_client.cpp" line="194"/>
+        <source>the download names a path outside its folder</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mac_client.cpp" line="214"/>
+        <source>the download links to a path outside its folder</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mac_client.cpp" line="239"/>
+        <source>the download could not be unpacked</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mac_client.cpp" line="300"/>
+        <source>Checking for %1 updates</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mac_client.cpp" line="308"/>
+        <location filename="../src/mac_client.cpp" line="351"/>
+        <location filename="../src/mac_client.cpp" line="392"/>
+        <location filename="../src/mac_client.cpp" line="471"/>
+        <location filename="../src/mac_client.cpp" line="493"/>
+        <source>Cancelled.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mac_client.cpp" line="314"/>
+        <source>%1 was changed since it was installed, and Roblox could not be reached to download it again.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mac_client.cpp" line="318"/>
+        <source>Could not reach Roblox to download %1.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mac_client.cpp" line="334"/>
+        <source>Updating %1 to %2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mac_client.cpp" line="335"/>
+        <source>Downloading %1 %2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mac_client.cpp" line="355"/>
+        <source>Could not download %1.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mac_client.cpp" line="359"/>
+        <source>Unpacking %1 %2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mac_client.cpp" line="396"/>
+        <source>Could not unpack %1: %2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mac_client.cpp" line="399"/>
+        <source>unexpected layout</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mac_client.cpp" line="407"/>
+        <location filename="../src/mac_client.cpp" line="413"/>
+        <source>Could not record the installed %1.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mac_client.cpp" line="474"/>
+        <source>Setting up the macOS environment</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mac_client.cpp" line="498"/>
+        <source>Could not set up the macOS environment (rosemary prefix create failed; the log has its output).</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mac_client.cpp" line="523"/>
+        <source>Could not write ClientAppSettings.json.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>stud::ui::codesign</name>
+    <message>
+        <location filename="../src/code_signature.cpp" line="290"/>
+        <source>Apple&apos;s root did not load</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/code_signature.cpp" line="441"/>
+        <source>Info.plist was changed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/code_signature.cpp" line="442"/>
+        <source>its seal was changed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/code_signature.cpp" line="444"/>
+        <source>its seal cannot be read</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>stud::ui::customization</name>
+    <message>
+        <location filename="../src/customization.cpp" line="266"/>
+        <source>could not apply the customization file %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customization.cpp" line="301"/>
+        <source>could not point %1 at the custom font</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customization.cpp" line="308"/>
+        <source>could not record the applied customizations</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customization.cpp" line="326"/>
+        <source>could not copy %1 into the customizations folder</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customization.cpp" line="337"/>
+        <location filename="../src/customization.cpp" line="747"/>
+        <source>Roblox is not installed yet; open it once first.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customization.cpp" line="363"/>
+        <source>could not write %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customization.cpp" line="392"/>
+        <source>Roblox&apos;s default</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customization.cpp" line="398"/>
+        <source>Recoloured</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customization.cpp" line="402"/>
+        <source>%1&apos;s %2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customization.cpp" line="410"/>
+        <source>Bloxstrap&apos;s classic</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customization.cpp" line="411"/>
+        <source>Bloxstrap&apos;s %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customization.cpp" line="414"/>
+        <source>Custom files</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customization.cpp" line="649"/>
+        <source>could not keep the download</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customization.cpp" line="757"/>
+        <source>Froststrap no longer offers it</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
