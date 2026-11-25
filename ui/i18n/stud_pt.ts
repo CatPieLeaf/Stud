@@ -9,7 +9,7 @@
     </message>
     <message>
         <source>Loading the release notes...</source>
-        <translation type="unfinished"></translation>
+        <translation>Carregando as notas da versão...</translation>
     </message>
     <message>
         <source>There are no release notes for Stud %1 on GitHub.</source>
@@ -156,7 +156,7 @@
     </message>
     <message>
         <source>By %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Por %1</translation>
     </message>
     <message>
         <source>Version %1</source>
