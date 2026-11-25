@@ -565,10 +565,12 @@ void warn_if_gamemode_cannot_raise_cpu() {
         warned = true;
         std::printf("stud: GameMode cannot change the CPU governor (not in the gamemode group)\n");
         stud::ui::send_notification(
-            QStringLiteral("GameMode can't speed up the CPU"),
-            QStringLiteral("You're not in the gamemode group, so the CPU stays in power-saving mode "
-                           "and Roblox runs slower. Run \"sudo usermod -aG gamemode $USER\", "
-                           "then log out and back in."));
+            QCoreApplication::translate("Main", "GameMode can't speed up the CPU"),
+            QCoreApplication::translate(
+                "Main",
+                "You're not in the gamemode group, so the CPU stays in power-saving mode "
+                "and Roblox runs slower. Run \"sudo usermod -aG gamemode $USER\", "
+                "then log out and back in."));
     });
     QObject::connect(check, &QProcess::errorOccurred, check, [check](QProcess::ProcessError error) {
         if (error == QProcess::FailedToStart) check->deleteLater();
@@ -650,22 +652,33 @@ KernelGpu kernel_gpu() {
 }
 
 QString no_gpu_access_reason(const KernelGpu& gpu) {
-    QString reason = QStringLiteral("Roblox needs the graphics card at %1, and your account cannot open it")
-                         .arg(gpu.blocked);
-    if (gpu.group.isEmpty()) return reason + QStringLiteral(". Without it, Roblox only shows an empty window.");
-    reason += QStringLiteral(": it belongs to the group \"%1\", which you are not in. Without it, Roblox only "
-                             "shows an empty window.\n\nJoin the group with\n\n    sudo usermod -aG %1 $USER\n\n"
-                             "then sign out and back in")
-                  .arg(gpu.group);
-    if (QFileInfo::exists(QStringLiteral("/opt/google/cros-containers"))) {
-        reason += QStringLiteral(" (on a Chromebook, restart Linux: right-click the Terminal app and choose "
-                                 "Shut down Linux)");
+    QString reason;
+    if (gpu.group.isEmpty()) {
+        reason = QCoreApplication::translate(
+                     "Main",
+                     "Roblox needs the graphics card at %1, and your account cannot open it. "
+                     "Without it, Roblox only shows an empty window.")
+                     .arg(gpu.blocked);
+    } else {
+        reason = QCoreApplication::translate(
+                     "Main",
+                     "Roblox needs the graphics card at %1, and your account cannot open it: it belongs "
+                     "to the group \"%2\", which you are not in. Without it, Roblox only shows an empty "
+                     "window.\n\nJoin the group with\n\n    sudo usermod -aG %2 $USER\n\nthen sign out "
+                     "and back in")
+                     .arg(gpu.blocked, gpu.group);
     }
-    return reason + QStringLiteral(", and start Stud again.");
+    if (QFileInfo::exists(QStringLiteral("/opt/google/cros-containers"))) {
+        reason += QCoreApplication::translate(
+            "Main",
+            " (on a Chromebook, restart Linux: right-click the Terminal app and choose Shut down Linux)");
+    }
+    return reason + QCoreApplication::translate("Main", ", and start Stud again.");
 }
 
 QString no_gpu_reason() {
-    QString reason = QStringLiteral(
+    QString reason = QCoreApplication::translate(
+        "Main",
         "Roblox needs a graphics card, and this Linux system has none it can use: Vulkan finds no "
         "device, and there is nothing in /dev/dri. Without one, Roblox only shows an empty window.");
     // ChromeOS's Linux container gets the GPU only when enabled.
@@ -745,7 +758,8 @@ QString wrapper_program(const QString& name) {
 
 // Why the wrapper `name` can't run, and inside the Flatpak how it would get there.
 QString missing_wrapper(const QString& name) {
-    const QString reason = QStringLiteral("The launch wrapper %1 isn't installed.").arg(name);
+    const QString reason =
+        QCoreApplication::translate("Main", "The launch wrapper %1 isn't installed.").arg(name);
     if (!QFileInfo::exists(QStringLiteral("/.flatpak-info"))) return reason;
     // The extension branch Stud was built against, from flatpak-builder's copy of the manifest.
     QFile manifest(QStringLiteral("/app/manifest.json"));
@@ -760,9 +774,11 @@ QString missing_wrapper(const QString& name) {
                   .value(QStringLiteral("version"))
                   .toString()
             : QString();
-    return reason + QStringLiteral(" In the Flatpak it has to come from Flathub as a Vulkan layer extension, "
-                                   "when there is one: flatpak install flathub "
-                                   "org.freedesktop.Platform.VulkanLayer.%1%2")
+    return reason + QLatin1Char(' ') +
+           QCoreApplication::translate("Main",
+                                       "In the Flatpak it has to come from Flathub as a Vulkan layer extension, "
+                                       "when there is one: flatpak install flathub "
+                                       "org.freedesktop.Platform.VulkanLayer.%1%2")
                         .arg(QFileInfo(name).fileName(), branch.isEmpty() ? QString() : QStringLiteral("//") + branch);
 }
 
@@ -827,11 +843,13 @@ void check_flatpak_permissions() {
     const QString command = stud::ui::flatpak_override_command(missing);
     std::fprintf(stderr, "stud: the Flatpak is missing %s\n", qPrintable(missing.join(QLatin1Char(' '))));
     QMessageBox box(QMessageBox::Warning, QStringLiteral("Stud"),
-                    QStringLiteral("Stud's Flatpak is missing permissions Roblox needs: %1.")
+                    QCoreApplication::translate("Main", "Stud's Flatpak is missing permissions Roblox needs: %1.")
                         .arg(missing.join(QStringLiteral(", "))));
-    box.setInformativeText(QStringLiteral("Run this in a terminal, then start Stud again:\n\n") + command);
+    box.setInformativeText(
+        QCoreApplication::translate("Main", "Run this in a terminal, then start Stud again:\n\n") + command);
     box.setTextInteractionFlags(Qt::TextSelectableByMouse);
-    QPushButton* copy = box.addButton(QStringLiteral("Copy command"), QMessageBox::ActionRole);
+    QPushButton* copy =
+        box.addButton(QCoreApplication::translate("Main", "Copy command"), QMessageBox::ActionRole);
     box.addButton(QMessageBox::Close);
     box.exec();
     if (box.clickedButton() == copy) QGuiApplication::clipboard()->setText(command);
@@ -851,8 +869,9 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
             return false;
         }
         QMessageBox::information(nullptr, "Stud",
-                                 "Stud is already running.\n\nClose the existing window before "
-                                 "starting it again.");
+                                 QCoreApplication::translate("Main",
+                                                             "Stud is already running.\n\nClose the existing "
+                                                             "window before starting it again."));
         return false;
     }
 
@@ -887,8 +906,9 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     const QString rosemary = stud::ui::client::find_rosemary();
     if (rosemary.isEmpty()) {
         open_settings_for_launch_failure(
-            QStringLiteral("Rosemary, which runs Roblox's macOS client, was not found. Install it, "
-                           "or set STUD_ROSEMARY to its path."));
+            QCoreApplication::translate("Main",
+                                        "Rosemary, which runs Roblox's macOS client, was not found. "
+                                        "Install it, or set STUD_ROSEMARY to its path."));
         return false;
     }
     std::printf("stud: rosemary %s\n", qPrintable(rosemary));
@@ -917,8 +937,9 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     if (has_nvidia_card() && nvidia_vulkan_driver().isEmpty()) {
         std::printf("stud: an NVIDIA card without NVIDIA's Vulkan driver\n");
         stud::ui::send_notification(
-            QStringLiteral("NVIDIA's Vulkan driver is missing"),
-            QStringLiteral("Roblox runs on another GPU until NVIDIA's Vulkan driver is installed."));
+            QCoreApplication::translate("Main", "NVIDIA's Vulkan driver is missing"),
+            QCoreApplication::translate("Main",
+                                        "Roblox runs on another GPU until NVIDIA's Vulkan driver is installed."));
     }
     clean_old_files(settings.cleaner_days);
     if (!stud::ui::customization::apply(*build, product, &error)) {
@@ -938,7 +959,7 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     const QString program = stud::ui::client::executable(*build);
     if (program.isEmpty()) {
         open_settings_for_launch_failure(
-            QStringLiteral("The Roblox client in %1 has no executable.").arg(build->app));
+            QCoreApplication::translate("Main", "The Roblox client in %1 has no executable.").arg(build->app));
         return false;
     }
     QStringList args{QStringLiteral("run"), program};
@@ -1043,9 +1064,10 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
             std::printf("stud: Roblox crashed on its first run with changed customizations; "
                         "%lld set aside\n", static_cast<long long>(set_aside.size()));
             stud::ui::send_notification(
-                QStringLiteral("Customizations turned off"),
-                QStringLiteral("Roblox crashed the first time it ran with your new customizations, "
-                               "so Stud put back the last set that worked. The new ones are in %1.")
+                QCoreApplication::translate("Main", "Customizations turned off"),
+                QCoreApplication::translate("Main",
+                                            "Roblox crashed the first time it ran with your new customizations, "
+                                            "so Stud put back the last set that worked. The new ones are in %1.")
                     .arg(stud::ui::customization::disabled_folder(product)));
         }
         stud::ui::close_loading_screen();
@@ -1067,7 +1089,7 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     }
     if (!g_client->waitForStarted(10000)) {
         open_settings_for_launch_failure(
-            QStringLiteral("Roblox didn't start: %1").arg(g_client->errorString()));
+            QCoreApplication::translate("Main", "Roblox didn't start: %1").arg(g_client->errorString()));
         return false;
     }
     if (settings.gamemode) register_with_gamemode(g_client->processId());
@@ -1234,24 +1256,27 @@ void show_crash_dialog(const QString& which_process) {
     box->setIconPixmap(QPixmap(QStringLiteral(":/stud-logo-update.png"))
                            .scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     box->setWindowTitle(QStringLiteral("Stud"));
-    box->setText(QStringLiteral("Oops, Stud has crashed!"));
+    box->setText(QCoreApplication::translate("Main", "Oops, Stud has crashed!"));
     box->setInformativeText(
-        log.isEmpty() ? QStringLiteral("%1 stopped unexpectedly.").arg(which_process)
-                      : QStringLiteral("%1 stopped unexpectedly.\n\nThe log for this session has "
-                                       "been written and can be exported.")
-                            .arg(which_process));
+        log.isEmpty()
+            ? QCoreApplication::translate("Main", "%1 stopped unexpectedly.").arg(which_process)
+            : QCoreApplication::translate("Main",
+                                          "%1 stopped unexpectedly.\n\nThe log for this session has "
+                                          "been written and can be exported.")
+                  .arg(which_process));
     QPushButton* export_button = nullptr;
     if (!log.isEmpty()) {
-        export_button = box->addButton(QStringLiteral("Export logs"), QMessageBox::ActionRole);
+        export_button = box->addButton(QCoreApplication::translate("Main", "Export logs"),
+                                       QMessageBox::ActionRole);
     }
     box->addButton(QMessageBox::Close);
 
     QObject::connect(box, &QMessageBox::finished, qApp, [box, export_button, log]() {
         if (export_button != nullptr && box->clickedButton() == export_button) {
-            QFileDialog dialog(nullptr, QStringLiteral("Export Stud log"));
+            QFileDialog dialog(nullptr, QCoreApplication::translate("Main", "Export Stud log"));
             dialog.setAcceptMode(QFileDialog::AcceptSave);
             dialog.setFileMode(QFileDialog::AnyFile);
-            dialog.setNameFilter(QStringLiteral("Log files (*.log);;All files (*)"));
+            dialog.setNameFilter(QCoreApplication::translate("Main", "Log files (*.log);;All files (*)"));
             dialog.setDirectory(QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
             dialog.selectFile(QFileInfo(log).fileName());
             const QString target =
@@ -1261,8 +1286,9 @@ void show_crash_dialog(const QString& which_process) {
             if (!target.isEmpty()) {
                 QFile::remove(target);
                 if (!QFile::copy(log, target)) {
-                    QMessageBox::warning(nullptr, QStringLiteral("Stud"),
-                                         QStringLiteral("Could not write %1.").arg(target));
+                    QMessageBox::warning(
+                        nullptr, QStringLiteral("Stud"),
+                        QCoreApplication::translate("Main", "Could not write %1.").arg(target));
                 }
             }
         }
@@ -1294,9 +1320,11 @@ int main(int argc, char** argv) {
             }
             const QString size = QLocale().formattedDataSize(removed.bytes);
             stud::ui::send_notification(
-                QStringLiteral("Welcome to Stud 2.0"),
-                QStringLiteral("Stud 1.x's Android files are gone (%1 freed). Your settings, FFlags "
-                               "and customizations were kept. Log in to Roblox again in the new client.")
+                QCoreApplication::translate("Main", "Welcome to Stud 2.0"),
+                QCoreApplication::translate("Main",
+                                            "Stud 1.x's Android files are gone (%1 freed). Your settings, FFlags "
+                                            "and customizations were kept. Log in to Roblox again in the new "
+                                            "client.")
                     .arg(size));
         }
     }

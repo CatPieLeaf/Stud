@@ -6,6 +6,7 @@
 
 #include <QCheckBox>
 #include <QColorDialog>
+#include <QCoreApplication>
 #include <QDir>
 #include <QFileDialog>
 #include <QFontDatabase>
@@ -46,20 +47,34 @@ struct Group {
 
 const std::vector<Group>& groups() {
     static const std::vector<Group> all = {
-        {"Pointer",
-         {{Part::Cursor, "Cursor", "Images (*.png)", true, true, nullptr, QStyle::SP_ArrowUp},
-          {Part::ShiftLock, "Shift lock", "Images (*.png)", true, false, nullptr, QStyle::SP_ArrowUp}}},
-        {"Interface",
-         {{Part::EmoteWheel, "Emote wheel", nullptr, true, false, nullptr, QStyle::SP_DesktopIcon},
-          {Part::Font, "Game font", "Fonts (*.ttf *.otf)", false, false, nullptr, QStyle::SP_FileIcon},
-          {Part::MonoFont, "Code font", "Fonts (*.ttf *.otf)", false, false, nullptr, QStyle::SP_FileIcon},
-          {Part::Emoji, "Emoji", "Fonts (*.ttf)", false, true, nullptr, QStyle::SP_FileIcon}}},
-        {"Sounds",
-         {{Part::DeathSound, "Death sound", "Sounds (*.ogg)", false, false, "audio-x-generic", QStyle::SP_MediaVolume},
-          {Part::CharacterSounds, "Character sounds", nullptr, false, true, "audio-x-generic", QStyle::SP_MediaVolume}}},
-        {"Avatar",
-         {{Part::AvatarBackground, "Avatar background", nullptr, false, true, "preferences-desktop-wallpaper",
-           QStyle::SP_DesktopIcon}}},
+        {QT_TRANSLATE_NOOP("stud::ui::CustomizePage", "Pointer"),
+         {{Part::Cursor, QT_TRANSLATE_NOOP("stud::ui::CustomizePage", "Cursor"),
+           QT_TRANSLATE_NOOP("stud::ui::CustomizePage", "Images (*.png)"), true, true, nullptr,
+           QStyle::SP_ArrowUp},
+          {Part::ShiftLock, QT_TRANSLATE_NOOP("stud::ui::CustomizePage", "Shift lock"),
+           QT_TRANSLATE_NOOP("stud::ui::CustomizePage", "Images (*.png)"), true, false, nullptr,
+           QStyle::SP_ArrowUp}}},
+        {QT_TRANSLATE_NOOP("stud::ui::CustomizePage", "Interface"),
+         {{Part::EmoteWheel, QT_TRANSLATE_NOOP("stud::ui::CustomizePage", "Emote wheel"), nullptr, true,
+           false, nullptr, QStyle::SP_DesktopIcon},
+          {Part::Font, QT_TRANSLATE_NOOP("stud::ui::CustomizePage", "Game font"),
+           QT_TRANSLATE_NOOP("stud::ui::CustomizePage", "Fonts (*.ttf *.otf)"), false, false, nullptr,
+           QStyle::SP_FileIcon},
+          {Part::MonoFont, QT_TRANSLATE_NOOP("stud::ui::CustomizePage", "Code font"),
+           QT_TRANSLATE_NOOP("stud::ui::CustomizePage", "Fonts (*.ttf *.otf)"), false, false, nullptr,
+           QStyle::SP_FileIcon},
+          {Part::Emoji, QT_TRANSLATE_NOOP("stud::ui::CustomizePage", "Emoji"),
+           QT_TRANSLATE_NOOP("stud::ui::CustomizePage", "Fonts (*.ttf)"), false, true, nullptr,
+           QStyle::SP_FileIcon}}},
+        {QT_TRANSLATE_NOOP("stud::ui::CustomizePage", "Sounds"),
+         {{Part::DeathSound, QT_TRANSLATE_NOOP("stud::ui::CustomizePage", "Death sound"),
+           QT_TRANSLATE_NOOP("stud::ui::CustomizePage", "Sounds (*.ogg)"), false, false, "audio-x-generic",
+           QStyle::SP_MediaVolume},
+          {Part::CharacterSounds, QT_TRANSLATE_NOOP("stud::ui::CustomizePage", "Character sounds"), nullptr,
+           false, true, "audio-x-generic", QStyle::SP_MediaVolume}}},
+        {QT_TRANSLATE_NOOP("stud::ui::CustomizePage", "Avatar"),
+         {{Part::AvatarBackground, QT_TRANSLATE_NOOP("stud::ui::CustomizePage", "Avatar background"),
+           nullptr, false, true, "preferences-desktop-wallpaper", QStyle::SP_DesktopIcon}}},
     };
     return all;
 }
@@ -124,7 +139,7 @@ public:
 
         auto* text = new QVBoxLayout();
         text->setSpacing(0);
-        auto* name = new QLabel(QString::fromLatin1(spec.name), this);
+        auto* name = new QLabel(QCoreApplication::translate("stud::ui::CustomizePage", spec.name), this);
         QFont bold = name->font();
         bold.setBold(true);
         name->setFont(bold);
@@ -143,7 +158,7 @@ public:
         row->addLayout(text, 1);
 
         auto* change = new QToolButton(this);
-        change->setText(QStringLiteral("Change"));
+        change->setText(QCoreApplication::translate("stud::ui::CustomizePage", "Change"));
         change->setPopupMode(QToolButton::InstantPopup);
         change->setToolButtonStyle(Qt::ToolButtonTextOnly);
         change->setMenu(menu());
@@ -151,7 +166,7 @@ public:
 
         reset_ = new QToolButton(this);
         reset_->setIcon(mono_icon("edit-undo", QStyle::SP_DialogResetButton));
-        reset_->setToolTip(QStringLiteral("Back to Roblox's default"));
+        reset_->setToolTip(QCoreApplication::translate("stud::ui::CustomizePage", "Back to Roblox's default"));
         connect(reset_, &QToolButton::clicked, this, [this] {
             customization::remove(spec_.part);
             finished(QString());
@@ -179,27 +194,30 @@ private:
         auto* menu = new QMenu(this);
         menu->setToolTipsVisible(true);
         if (spec_.filter != nullptr) {
-            menu->addAction(mono_icon("document-open", QStyle::SP_DialogOpenButton), QStringLiteral("Choose file..."),
+            menu->addAction(mono_icon("document-open", QStyle::SP_DialogOpenButton), QCoreApplication::translate("stud::ui::CustomizePage", "Choose file..."),
                             this, [this] {
                                 const QString file = QFileDialog::getOpenFileName(
-                                    this, QString::fromLatin1(spec_.name), QString(), QString::fromLatin1(spec_.filter));
+                                    this, QCoreApplication::translate("stud::ui::CustomizePage", spec_.name),
+                                    QString(),
+                                    QCoreApplication::translate("stud::ui::CustomizePage", spec_.filter));
                                 if (file.isEmpty()) return;
                                 QString error;
                                 finished(customization::use_file(spec_.part, file, &error) ? QString() : error);
                             });
         }
         if (spec_.colour) {
-            menu->addAction(mono_icon("color-picker", QStyle::SP_DesktopIcon), QStringLiteral("Colour..."), this, [this] {
+            menu->addAction(mono_icon("color-picker", QStyle::SP_DesktopIcon), QCoreApplication::translate("stud::ui::CustomizePage", "Colour..."), this, [this] {
                 const QColor last = customization::applied(spec_.part).colour;
                 const QColor picked =
-                    QColorDialog::getColor(last.isValid() ? last : QColor(Qt::white), this, QString::fromLatin1(spec_.name));
+                    QColorDialog::getColor(last.isValid() ? last : QColor(Qt::white), this,
+                                           QCoreApplication::translate("stud::ui::CustomizePage", spec_.name));
                 if (!picked.isValid()) return;
                 QString error;
                 finished(customization::recolour(spec_.part, picked, &error) ? QString() : error);
             });
         }
         if (spec_.offers) {
-            looking_ = menu->addAction(QStringLiteral("Looking for more in other bootstrappers..."));
+            looking_ = menu->addAction(QCoreApplication::translate("stud::ui::CustomizePage", "Looking for more in other bootstrappers..."));
             looking_->setEnabled(false);
             connect(menu, &QMenu::aboutToShow, this, [this, menu] { load_offers(menu); });
         }
@@ -216,8 +234,9 @@ private:
                                                               const QString& error) {
             if (!self || !guard) return;
             if (offers.isEmpty()) {
-                self->looking_->setText(error.isEmpty() ? QStringLiteral("Nothing more from other bootstrappers")
-                                                        : QStringLiteral("Couldn't reach them: %1").arg(error));
+                self->looking_->setText(error.isEmpty()
+                                            ? QCoreApplication::translate("stud::ui::CustomizePage", "Nothing more from other bootstrappers")
+                                            : QCoreApplication::translate("stud::ui::CustomizePage", "Couldn't reach them: %1").arg(error));
                 // Asked again at the next opening, in case the network is back.
                 self->offers_asked_ = false;
                 return;
@@ -227,7 +246,7 @@ private:
             for (const customization::Offer& offer : offers) {
                 if (offer.source != section) {
                     section = offer.source;
-                    guard->addSection(QStringLiteral("From %1").arg(section));
+                    guard->addSection(QCoreApplication::translate("stud::ui::CustomizePage", "From %1").arg(section));
                 }
                 QAction* action = guard->addAction(offer.name, self, [self, offer] { self->install(offer); });
                 if (offer.preview.isValid()) self->show_preview(action, offer.preview);
@@ -251,7 +270,7 @@ private:
 
     void install(const customization::Offer& offer) {
         busy_ = true;
-        state_->setText(QStringLiteral("Downloading from %1...").arg(offer.source));
+        state_->setText(QCoreApplication::translate("stud::ui::CustomizePage", "Downloading from %1...").arg(offer.source));
         QPointer<Card> self = this;
         customization::install(spec_.part, offer, [self](const QString& error) {
             if (!self) return;
@@ -314,12 +333,12 @@ CustomizePage::CustomizePage(std::function<void()> import, QWidget* parent) : QW
     auto* page = new QVBoxLayout(this);
     page->setContentsMargins(0, 0, 0, 0);
     auto* note = new QLabel(
-        QStringLiteral("These change Roblox Player, and take effect the next time it starts."), this);
+        tr("These change Roblox Player, and take effect the next time it starts."), this);
     note->setWordWrap(true);
     page->addWidget(note);
 
     for (const Group& group : groups()) {
-        auto* box = new QGroupBox(QString::fromLatin1(group.title), this);
+        auto* box = new QGroupBox(QCoreApplication::translate("stud::ui::CustomizePage", group.title), this);
         auto* cards = new QVBoxLayout(box);
         for (const Spec& spec : group.parts) {
             auto* card = new Card(spec, box);
@@ -329,10 +348,10 @@ CustomizePage::CustomizePage(std::function<void()> import, QWidget* parent) : QW
         page->addWidget(box);
     }
 
-    auto* login = new QGroupBox(QStringLiteral("Login screen"), this);
+    auto* login = new QGroupBox(tr("Login screen"), this);
     auto* loginRows = new QVBoxLayout(login);
-    auto* oldLogin = new QCheckBox(QStringLiteral("Old login screen, from Froststrap"), login);
-    oldLogin->setToolTip(QStringLiteral("The login background and logo Roblox had before."));
+    auto* oldLogin = new QCheckBox(tr("Old login screen, from Froststrap"), login);
+    oldLogin->setToolTip(tr("The login background and logo Roblox had before."));
     loginRows->addWidget(oldLogin);
     QLabel* loginError = error_label(login);
     loginRows->addWidget(loginError);
@@ -355,10 +374,10 @@ CustomizePage::CustomizePage(std::function<void()> import, QWidget* parent) : QW
     page->addWidget(login);
 
     auto* actions = new QHBoxLayout();
-    auto* importOther = new QPushButton(QStringLiteral("Import from Bloxstrap, Fishstrap or Froststrap..."), this);
+    auto* importOther = new QPushButton(tr("Import from Bloxstrap, Fishstrap or Froststrap..."), this);
     importOther->setIcon(mono_icon("document-import", QStyle::SP_DialogOpenButton));
-    importOther->setToolTip(QStringLiteral("Choose that bootstrapper's folder: its customizations are copied in, and "
-                                           "its FastFlags added to the FFlags tab."));
+    importOther->setToolTip(tr("Choose that bootstrapper's folder: its customizations are copied in, and "
+                               "its FastFlags added to the FFlags tab."));
     connect(importOther, &QPushButton::clicked, this, [this, import] {
         import();
         refresh();
@@ -367,14 +386,14 @@ CustomizePage::CustomizePage(std::function<void()> import, QWidget* parent) : QW
 
     // Mirrors Roblox's content tree, so Bloxstrap and Froststrap folders drop in.
     auto* folders = new QToolButton(this);
-    folders->setText(QStringLiteral("Open folder"));
+    folders->setText(tr("Open folder"));
     folders->setIcon(mono_icon("folder-open", QStyle::SP_DirOpenIcon));
     folders->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     folders->setPopupMode(QToolButton::InstantPopup);
     auto* folderMenu = new QMenu(folders);
     for (const auto product : {client::Product::Player, client::Product::Studio}) {
-        folderMenu->addAction(product == client::Product::Studio ? QStringLiteral("Studio customizations")
-                                                                 : QStringLiteral("Player customizations"),
+        folderMenu->addAction(product == client::Product::Studio ? tr("Studio customizations")
+                                                                 : tr("Player customizations"),
                               this, [product] {
                                   QDir().mkpath(customization::folder(product));
                                   open_location(QUrl::fromLocalFile(customization::folder(product)));

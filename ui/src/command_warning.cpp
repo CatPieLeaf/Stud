@@ -1,6 +1,7 @@
 #include "command_warning.h"
 
 #include <QClipboard>
+#include <QCoreApplication>
 #include <QFontDatabase>
 #include <QFrame>
 #include <QGuiApplication>
@@ -30,7 +31,7 @@ QFrame* command_warning(QWidget* parent, const QString& text, const QString& com
     line->setTextInteractionFlags(Qt::TextSelectableByMouse);
     line->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     column->addWidget(line);
-    auto* copy = new QPushButton(QStringLiteral("Copy command"), box);
+    auto* copy = new QPushButton(QCoreApplication::translate("CommandWarning", "Copy command"), box);
     QObject::connect(copy, &QPushButton::clicked, box,
                      [command] { QGuiApplication::clipboard()->setText(command); });
     column->addWidget(copy, 0, Qt::AlignRight);

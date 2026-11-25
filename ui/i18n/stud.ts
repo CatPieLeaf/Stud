@@ -55,10 +55,401 @@
     </message>
 </context>
 <context>
+    <name>CommandWarning</name>
+    <message>
+        <location filename="../src/command_warning.cpp" line="34"/>
+        <source>Copy command</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>LoadingScreen</name>
     <message>
         <location filename="../src/loading_screen.cpp" line="82"/>
         <source>Cancel</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>LogExport</name>
+    <message>
+        <location filename="../src/log_export.cpp" line="39"/>
+        <source>There are no logs to export yet.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/log_export.cpp" line="65"/>
+        <source>Export Stud&apos;s logs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/log_export.cpp" line="66"/>
+        <source>Archives (*.tar.gz);;All files (*)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/log_export.cpp" line="76"/>
+        <source>Could not export the logs: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/log_export.cpp" line="89"/>
+        <source>Export the latest log</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/log_export.cpp" line="91"/>
+        <source>Log files (*.log);;All files (*)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/log_export.cpp" line="97"/>
+        <source>Could not write %1.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/log_export.cpp" line="100"/>
+        <source>The latest log saved to %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>Main</name>
+    <message>
+        <location filename="../src/main.cpp" line="568"/>
+        <source>GameMode can&apos;t speed up the CPU</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="569"/>
+        <source>You&apos;re not in the gamemode group, so the CPU stays in power-saving mode and Roblox runs slower. Run &quot;sudo usermod -aG gamemode $USER&quot;, then log out and back in.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="657"/>
+        <source>Roblox needs the graphics card at %1, and your account cannot open it. Without it, Roblox only shows an empty window.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="663"/>
+        <source>Roblox needs the graphics card at %1, and your account cannot open it: it belongs to the group &quot;%2&quot;, which you are not in. Without it, Roblox only shows an empty window.
+
+Join the group with
+
+    sudo usermod -aG %2 $USER
+
+then sign out and back in</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="672"/>
+        <source> (on a Chromebook, restart Linux: right-click the Terminal app and choose Shut down Linux)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="676"/>
+        <source>, and start Stud again.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="680"/>
+        <source>Roblox needs a graphics card, and this Linux system has none it can use: Vulkan finds no device, and there is nothing in /dev/dri. Without one, Roblox only shows an empty window.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="762"/>
+        <source>The launch wrapper %1 isn&apos;t installed.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="778"/>
+        <source>In the Flatpak it has to come from Flathub as a Vulkan layer extension, when there is one: flatpak install flathub org.freedesktop.Platform.VulkanLayer.%1%2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="846"/>
+        <source>Stud&apos;s Flatpak is missing permissions Roblox needs: %1.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="849"/>
+        <source>Run this in a terminal, then start Stud again:
+
+</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="852"/>
+        <source>Copy command</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="872"/>
+        <source>Stud is already running.
+
+Close the existing window before starting it again.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="909"/>
+        <source>Rosemary, which runs Roblox&apos;s macOS client, was not found. Install it, or set STUD_ROSEMARY to its path.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="940"/>
+        <source>NVIDIA&apos;s Vulkan driver is missing</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="941"/>
+        <source>Roblox runs on another GPU until NVIDIA&apos;s Vulkan driver is installed.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="962"/>
+        <source>The Roblox client in %1 has no executable.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="1067"/>
+        <source>Customizations turned off</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="1068"/>
+        <source>Roblox crashed the first time it ran with your new customizations, so Stud put back the last set that worked. The new ones are in %1.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="1092"/>
+        <source>Roblox didn&apos;t start: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="1259"/>
+        <source>Oops, Stud has crashed!</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="1262"/>
+        <source>%1 stopped unexpectedly.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="1263"/>
+        <source>%1 stopped unexpectedly.
+
+The log for this session has been written and can be exported.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="1269"/>
+        <source>Export logs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="1276"/>
+        <source>Export Stud log</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="1279"/>
+        <source>Log files (*.log);;All files (*)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="1291"/>
+        <source>Could not write %1.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="1323"/>
+        <source>Welcome to Stud 2.0</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="1324"/>
+        <source>Stud 1.x&apos;s Android files are gone (%1 freed). Your settings, FFlags and customizations were kept. Log in to Roblox again in the new client.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>stud::ui::CustomizePage</name>
+    <message>
+        <location filename="../src/customize_page.cpp" line="50"/>
+        <source>Pointer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="51"/>
+        <source>Cursor</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="52"/>
+        <location filename="../src/customize_page.cpp" line="55"/>
+        <source>Images (*.png)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="54"/>
+        <source>Shift lock</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="57"/>
+        <source>Interface</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="58"/>
+        <source>Emote wheel</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="60"/>
+        <source>Game font</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="61"/>
+        <location filename="../src/customize_page.cpp" line="64"/>
+        <source>Fonts (*.ttf *.otf)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="63"/>
+        <source>Code font</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="66"/>
+        <source>Emoji</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="67"/>
+        <source>Fonts (*.ttf)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="69"/>
+        <source>Sounds</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="70"/>
+        <source>Death sound</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="71"/>
+        <source>Sounds (*.ogg)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="73"/>
+        <source>Character sounds</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="75"/>
+        <source>Avatar</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="76"/>
+        <source>Avatar background</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="161"/>
+        <source>Change</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="169"/>
+        <source>Back to Roblox&apos;s default</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="197"/>
+        <source>Choose file...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="209"/>
+        <source>Colour...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="220"/>
+        <source>Looking for more in other bootstrappers...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="238"/>
+        <source>Nothing more from other bootstrappers</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="239"/>
+        <source>Couldn&apos;t reach them: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="249"/>
+        <source>From %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="273"/>
+        <source>Downloading from %1...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="336"/>
+        <source>These change Roblox Player, and take effect the next time it starts.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="351"/>
+        <source>Login screen</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="353"/>
+        <source>Old login screen, from Froststrap</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="354"/>
+        <source>The login background and logo Roblox had before.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="377"/>
+        <source>Import from Bloxstrap, Fishstrap or Froststrap...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="379"/>
+        <source>Choose that bootstrapper&apos;s folder: its customizations are copied in, and its FastFlags added to the FFlags tab.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="389"/>
+        <source>Open folder</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="395"/>
+        <source>Studio customizations</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/customize_page.cpp" line="396"/>
+        <source>Player customizations</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
