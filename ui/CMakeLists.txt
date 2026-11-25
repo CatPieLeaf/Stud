@@ -133,5 +133,5 @@ if(Qt6LinguistTools_FOUND)
     qt_add_lupdate(stud-ui
         TS_FILES "${CMAKE_CURRENT_SOURCE_DIR}/i18n/stud.ts"
         SOURCES ${stud_ui_source_catalogue}
-        LUPDATE_OPTIONS -no-obsolete)
+        OPTIONS -no-obsolete -locations none -source-language en)
 endif()
