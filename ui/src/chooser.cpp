@@ -298,8 +298,6 @@ bool rpm_without_wpe() {
                       QStringLiteral("libWPEWebKit-2.0.so.1()(64bit)")});
 }
 
-}  // namespace
-
 // Shown in rotation on the welcome page, translated like any other string.
 const char* const kQuotes[] = {
     QT_TRANSLATE_NOOP("stud::ui::Chooser", "Also known as \"Roblox opener\"!"),
@@ -337,6 +335,7 @@ const char* const kQuotes[] = {
     QT_TRANSLATE_NOOP("stud::ui::Chooser", "Do not play at 3 AM!"),
     QT_TRANSLATE_NOOP("stud::ui::Chooser", ":btools me"),
 };
+}  // namespace
 
 std::optional<client::Product> choose_product() {
     QDialog dialog;

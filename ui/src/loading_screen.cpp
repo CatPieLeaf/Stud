@@ -103,8 +103,6 @@ void raise() {
     QCoreApplication::processEvents();
 }
 
-}  // namespace
-
 // Rotated every two seconds while Roblox starts.
 const char* const kLoadingLines[] = {
     QT_TRANSLATE_NOOP("stud::ui::LoadingScreen", "Preparing Roblox..."),
@@ -124,6 +122,7 @@ const char* const kLoadingLines[] = {
     QT_TRANSLATE_NOOP("stud::ui::LoadingScreen", "Saying hello to the server..."),
     QT_TRANSLATE_NOOP("stud::ui::LoadingScreen", "Almost there..."),
 };
+}  // namespace
 
 void show_loading_lines(std::function<void()> on_cancel) {
     Screen& s = screen();
