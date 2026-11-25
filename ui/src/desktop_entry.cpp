@@ -219,7 +219,7 @@ int install_desktop_entry() {
     }
     write_index_theme(icons_dir);
 
-    // Stud's entry and the hidden <id>.Player and <id>.Studio ones, with this install's Exec and Icon.
+    // Stud's entry and the hidden <id>.player and <id>.studio ones, with this install's Exec and Icon.
     const QString program = launcher_command();
     const auto install_entry = [&](const QString& name) {
         QFile source_entry(share + "/applications/" + name + ".desktop");
@@ -254,8 +254,8 @@ int install_desktop_entry() {
         return true;
     };
     if (!install_entry(app_id)) return 1;
-    install_entry(app_id + QStringLiteral(".Player"));
-    install_entry(app_id + QStringLiteral(".Studio"));
+    install_entry(app_id + QStringLiteral(".player"));
+    install_entry(app_id + QStringLiteral(".studio"));
     const QString entry_path = apps_dir + "/" + app_id + ".desktop";
 
     // Declaring a scheme isn't enough: with no default set, browsers show a chooser

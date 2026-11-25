@@ -50,7 +50,7 @@ fi
 # to notice the new icon directory. The hicolor copies serve anything using the theme.
 icon_path="$icons/512x512/apps/$app_id.png"
 # The installed entries, pointed at this build and at the icons above.
-for entry in "$app_id" "$app_id.Player" "$app_id.Studio"; do
+for entry in "$app_id" "$app_id.player" "$app_id.studio"; do
     sed -e "s|^Exec=stud|Exec=$stud_ui|" \
         -e "s|^Icon=$app_id-player$|Icon=$icons/512x512/apps/$app_id-player.png|" \
         -e "s|^Icon=$app_id-studio$|Icon=$icons/512x512/apps/$app_id-studio.png|" \

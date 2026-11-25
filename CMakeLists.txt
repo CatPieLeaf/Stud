@@ -132,10 +132,11 @@ endif()
 #   <prefix>/bin/stud                      the launcher
 #   <prefix>/libexec/stud/rosemary         Rosemary
 #   <prefix>/share/...                     desktop entry, icon, AppStream
-# Hidden .Player and .Studio entries give the Roblox windows their own taskbar icons.
+# Hidden .player and .studio entries give the Roblox windows their own taskbar icons. Lower case,
+# so a package's file list has Stud's own entry first: Discover launches the first one it finds.
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/${STUD_APP_ID}.desktop"
-              "${CMAKE_CURRENT_SOURCE_DIR}/packaging/${STUD_APP_ID}.Player.desktop"
-              "${CMAKE_CURRENT_SOURCE_DIR}/packaging/${STUD_APP_ID}.Studio.desktop"
+              "${CMAKE_CURRENT_SOURCE_DIR}/packaging/${STUD_APP_ID}.player.desktop"
+              "${CMAKE_CURRENT_SOURCE_DIR}/packaging/${STUD_APP_ID}.studio.desktop"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/${STUD_APP_ID}.metainfo.xml"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/metainfo")

@@ -51,7 +51,7 @@ log.
 | `ROSEMARY_WINDOW_STATE` | always | `~/.local/state/stud/window` (`window-studio` for Studio): the main window's size and whether it was maximized or fullscreen, written as it changes and restored at the next start |
 | `ROSEMARY_NOTIFICATIONS` | always | `$XDG_RUNTIME_DIR/stud/notifications` (`notifications-studio` for Studio): a socket the client listens on and shows each notification Stud sends from as a Mac-style banner, used as Notifications decides. |
 | `ROSEMARY_PROC_TRANSLATED` | always | `0`: the client is told it runs on an Intel Mac, as the CPU it sees says, rather than translated by Rosetta on Apple silicon. |
-| `SDL_APP_ID` | always | Stud's application id with `.Player` or `.Studio` after it, whose hidden desktop entry gives the taskbar the red stud for Roblox and the blue one for Studio. |
+| `SDL_APP_ID` | always | Stud's application id with `.player` or `.studio` after it, whose hidden desktop entry gives the taskbar the red stud for Roblox and the blue one for Studio. |
 | `ROSEMARY_REFUSED_PROGRAMS` | always | `RobloxPlayerInstaller:RobloxStudioInstaller`: Roblox's own installer is never run in the prefix, so it cannot put another build (a test channel's, say) over the one Stud installed and checked. |
 | `SDL_APP_NAME`, `SDL_AUDIO_DEVICE_STREAM_NAME`, `SDL_AUDIO_DEVICE_APP_ICON_NAME` | always | `Stud`, `Roblox audio` and Stud's icon: the sound server lists the game's sound under Stud (Stud's fork makes Rosemary take the name over the bundle's). |
 | `ROSEMARY_RENDER_SCALE` | Render resolution, on Vulkan | The fraction of the window the game is drawn at, below 100%, applied to the backing scale the client is told; unset at 100% and on OpenGL. |

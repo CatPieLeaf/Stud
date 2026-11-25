@@ -5,4 +5,4 @@ Exec=stud --studio
 Icon=io.github.catpieleaf.Stud-studio
 Terminal=false
 NoDisplay=true
-StartupWMClass=io.github.catpieleaf.Stud.Studio
+StartupWMClass=io.github.catpieleaf.Stud.studio

@@ -396,11 +396,11 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
     env.insert(QStringLiteral("ROSEMARY_PREFIX"), stud::ui::client::prefix_dir());
     env.insert(QStringLiteral("ROSEMARY_PREFIX_SETUP"), QStringLiteral("download"));
 
-    // <id>.Player or <id>.Studio, whose hidden desktop entries give the taskbar
+    // <id>.player or <id>.studio, whose hidden desktop entries give the taskbar
     // the right icon. Flatpak accepts them as extensions of the sandbox id.
     const bool studio = product == stud::ui::client::Product::Studio;
     env.insert(QStringLiteral("SDL_APP_ID"),
-               QStringLiteral(STUD_APP_ID) + (studio ? QStringLiteral(".Studio") : QStringLiteral(".Player")));
+               QStringLiteral(STUD_APP_ID) + (studio ? QStringLiteral(".studio") : QStringLiteral(".player")));
     // Plasma's mixer drops stream names containing "audio", so it shows just Stud.
     env.insert(QStringLiteral("SDL_APP_NAME"), QStringLiteral("Stud"));
     // An Intel Mac, not Rosetta: Rosemary reports Rosetta for Roblox's installer,

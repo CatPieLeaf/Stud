@@ -171,8 +171,8 @@ mkdir -p "$appdir/libexec/stud"
 ln -f "$appdir/sharun" "$appdir/libexec/stud/rosemary"
 # The desktop entry and icons Stud installs, and redistributed licences.
 (cd /usr/share && cp -a --parents \
-    "applications/$app_id.desktop" "applications/$app_id.Player.desktop" \
-    "applications/$app_id.Studio.desktop" "metainfo/$app_id.metainfo.xml" "mime/packages/$app_id.xml" \
+    "applications/$app_id.desktop" "applications/$app_id.player.desktop" \
+    "applications/$app_id.studio.desktop" "metainfo/$app_id.metainfo.xml" "mime/packages/$app_id.xml" \
     icons/hicolor/*/apps/"$app_id"*.png licenses/stud doc/stud \
     "$appdir/share/")
 # AppImageHub only reads metainfo from usr/share/metainfo.
