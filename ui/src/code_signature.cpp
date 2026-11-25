@@ -2,6 +2,7 @@
 
 #include "apple_root_ca.h"  // kAppleRootCa: Apple Root CA, DER, generated at build
 
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
@@ -286,7 +287,7 @@ QString signed_by_roblox(const QByteArray& directory, const QByteArray& wrapped)
     const auto* root_bytes = kAppleRootCa;
     Owned<X509, X509_free> root(d2i_X509(nullptr, &root_bytes, long(sizeof kAppleRootCa)));
     Owned<X509_STORE, X509_STORE_free> store(X509_STORE_new());
-    if (!root || !store || X509_STORE_add_cert(store.get(), root.get()) != 1) return QStringLiteral("Apple's root did not load");
+    if (!root || !store || X509_STORE_add_cert(store.get(), root.get()) != 1) return QCoreApplication::translate("stud::ui::codesign", "Apple's root did not load");
     STACK_OF(X509)* certificates = CMS_get1_certs(cms.get());
     Owned<X509_STORE_CTX, X509_STORE_CTX_free> context(X509_STORE_CTX_new());
     QString failure;
@@ -437,10 +438,10 @@ std::optional<Code> check_bundle(const QString& path, int depth, QString* error)
     if (!code) return fail(QStringLiteral("%1: %2").arg(QFileInfo(bundle->executable).fileName(), why));
 
     const QString resources_path = bundle->seal_root + QStringLiteral("/_CodeSignature/CodeResources");
-    if (sha256_of_file(bundle->info_plist) != code->special(kSlotInfo)) return fail(QStringLiteral("Info.plist was changed"));
-    if (sha256_of_file(resources_path) != code->special(kSlotResources)) return fail(QStringLiteral("its seal was changed"));
+    if (sha256_of_file(bundle->info_plist) != code->special(kSlotInfo)) return fail(QCoreApplication::translate("stud::ui::codesign", "Info.plist was changed"));
+    if (sha256_of_file(resources_path) != code->special(kSlotResources)) return fail(QCoreApplication::translate("stud::ui::codesign", "its seal was changed"));
     const auto seal = read_plist(resources_path);
-    if (!seal) return fail(QStringLiteral("its seal cannot be read"));
+    if (!seal) return fail(QCoreApplication::translate("stud::ui::codesign", "its seal cannot be read"));
     const QVariantHash files = seal->value(QStringLiteral("files2")).toHash();
 
     QStringList nested_roots;

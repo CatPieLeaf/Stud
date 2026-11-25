@@ -122,3 +122,16 @@ target_include_directories(stud-ui PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generate
 # Only the launcher goes on PATH; Rosemary is found relative to it in libexec.
 install(PROGRAMS "$<TARGET_FILE:stud-ui>"
         DESTINATION "${CMAKE_INSTALL_BINDIR}" RENAME stud)
+
+# lupdate reads src/ into this template; Weblate starts each language from it.
+# Optional, so a distro without the Linguist tools still builds, in English.
+find_package(Qt6 QUIET COMPONENTS LinguistTools)
+if(Qt6LinguistTools_FOUND)
+    file(GLOB_RECURSE stud_ui_source_catalogue CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h")
+    qt_add_lupdate(stud-ui
+        TS_FILES "${CMAKE_CURRENT_SOURCE_DIR}/i18n/stud.ts"
+        SOURCES ${stud_ui_source_catalogue}
+        OPTIONS -no-obsolete -locations none -source-language en)
+endif()

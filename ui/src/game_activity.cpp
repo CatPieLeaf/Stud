@@ -7,6 +7,7 @@
 #include "notifications.h"
 #include "stud/stud_paths.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -271,7 +272,7 @@ void GameActivity::server(const QString& address) {
               if (generation == generation_) location_ = where;
               if (!options_.region) return;
               const QString flag = flag_of(json.value(QStringLiteral("country_code")).toString());
-              send_notification(QStringLiteral("Server region"),
+              send_notification(QCoreApplication::translate("stud::ui::GameActivity", "Server region"),
                                 flag.isEmpty() ? where : flag + QStringLiteral(" ") + where,
                                 QString(), {/*transient=*/true, /*suppress_sound=*/true});
           });
@@ -353,29 +354,44 @@ void GameActivity::publish() {
     if (options_.studio) {
         // A published place by its public name and icon; a local file as "a place".
         if (studio_doc_ == -2) {
-            a.details = studio_editing_ ? "Developing a place" : "In Roblox Studio";
+            a.details = studio_editing_
+                            ? QCoreApplication::translate("stud::ui::GameActivity", "Developing a place").toStdString()
+                            : QCoreApplication::translate("stud::ui::GameActivity", "In Roblox Studio").toStdString();
         } else if (studio_doc_ == -1) {
-            a.details = "Idling";
+            a.details = QCoreApplication::translate("stud::ui::GameActivity", "Idling").toStdString();
         } else {
-            a.details = name_.isEmpty() ? "Developing a place" : "Developing " + name_.toStdString();
+            a.details = name_.isEmpty()
+                            ? QCoreApplication::translate("stud::ui::GameActivity", "Developing a place").toStdString()
+                            : QCoreApplication::translate("stud::ui::GameActivity", "Developing %1")
+                                  .arg(name_)
+                                  .toStdString();
             a.large_image = icon_.toStdString();
             a.large_text = name_.toStdString();
         }
-        a.state = studio_doc_ == 2 ? "Editing a script" : "Roblox Studio";
+        a.state = studio_doc_ == 2
+                      ? QCoreApplication::translate("stud::ui::GameActivity", "Editing a script").toStdString()
+                      : QCoreApplication::translate("stud::ui::GameActivity", "Roblox Studio").toStdString();
         a.start = studio_since_;
         a.status_display = 2;
         discord_rpc_set(a);
         return;
     }
     if (place_.isEmpty()) {
-        a.details = "In the Roblox app";
+        a.details = QCoreApplication::translate("stud::ui::GameActivity", "In the Roblox app").toStdString();
         a.small_image = avatar_.toStdString();
         discord_rpc_set(a);
         return;
     }
-    a.details = game_details_ ? game_.details : (name_.isEmpty() ? "In a game" : name_.toStdString());
-    a.state = game_state_ ? game_.state
-                          : (creator_.isEmpty() ? std::string() : "by " + creator_.toStdString());
+    a.details = game_details_
+                    ? game_.details
+                    : (name_.isEmpty()
+                           ? QCoreApplication::translate("stud::ui::GameActivity", "In a game").toStdString()
+                           : name_.toStdString());
+    a.state = game_state_
+                  ? game_.state
+                  : (creator_.isEmpty()
+                         ? std::string()
+                         : QCoreApplication::translate("stud::ui::GameActivity", "by %1").arg(creator_).toStdString());
     a.large_image = !game_.large_image.empty() ? game_.large_image : icon_.toStdString();
     a.large_text = !game_.large_text.empty() ? game_.large_text : name_.toStdString();
     a.small_image = !game_.small_image.empty() ? game_.small_image : avatar_.toStdString();
@@ -385,9 +401,10 @@ void GameActivity::publish() {
     a.start = game_start_ ? game_.start : joined_at_;
     a.end = game_end_ ? game_.end : 0;
     if (options_.join_button && !g_server_link.isEmpty()) {
-        a.buttons.emplace_back("Join server", g_server_link.toStdString());
+        a.buttons.emplace_back(QCoreApplication::translate("stud::ui::GameActivity", "Join server").toStdString(),
+                               g_server_link.toStdString());
     }
-    a.buttons.emplace_back("See game page",
+    a.buttons.emplace_back(QCoreApplication::translate("stud::ui::GameActivity", "See game page").toStdString(),
                            QStringLiteral("https://www.roblox.com/games/%1").arg(place_).toStdString());
     discord_rpc_set(a);
 }

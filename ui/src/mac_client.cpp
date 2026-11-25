@@ -160,7 +160,7 @@ bool extract_zip(const QString& zip_path, const QString& dir, QString* error,
     mz_zip_archive zip{};
     const QByteArray zip_name = QFile::encodeName(zip_path);
     if (!mz_zip_reader_init_file(&zip, zip_name.constData(), 0)) {
-        *error = QStringLiteral("the download is not a readable zip");
+        *error = QCoreApplication::translate("stud::ui::client", "the download is not a readable zip");
         return false;
     }
     const QString root = QDir(dir).absolutePath() + QLatin1Char('/');
@@ -175,7 +175,7 @@ bool extract_zip(const QString& zip_path, const QString& dir, QString* error,
         // Keeps Cancel responsive mid-unpack.
         QCoreApplication::processEvents();
         if (g_cancelled) {
-            *error = QStringLiteral("cancelled");
+            *error = QCoreApplication::translate("stud::ui::client", "cancelled");
             ok = false;
             break;
         }
@@ -191,7 +191,7 @@ bool extract_zip(const QString& zip_path, const QString& dir, QString* error,
         const QString name = QString::fromUtf8(stat.m_filename);
         const QString target = QDir::cleanPath(root + name);
         if (name.startsWith(QLatin1Char('/')) || !inside(target)) {
-            *error = QStringLiteral("the download names a path outside its folder");
+            *error = QCoreApplication::translate("stud::ui::client", "the download names a path outside its folder");
             ok = false;
             break;
         }
@@ -211,7 +211,7 @@ bool extract_zip(const QString& zip_path, const QString& dir, QString* error,
             const QString resolved =
                 QFileInfo(target).absolutePath() + QLatin1Char('/') + QString::fromUtf8(link_target);
             if (link_target.isEmpty() || link_target.startsWith('/') || !inside(resolved)) {
-                *error = QStringLiteral("the download links to a path outside its folder");
+                *error = QCoreApplication::translate("stud::ui::client", "the download links to a path outside its folder");
                 ok = false;
                 break;
             }
@@ -235,7 +235,8 @@ bool extract_zip(const QString& zip_path, const QString& dir, QString* error,
         ::unlink(path_name.constData());
         ok = ::symlink(link_target.constData(), path_name.constData()) == 0;
     }
-    if (!ok && error->isEmpty()) *error = QStringLiteral("the download could not be unpacked");
+    if (!ok && error->isEmpty())
+        *error = QCoreApplication::translate("stud::ui::client", "the download could not be unpacked");
     return ok;
 }
 
@@ -296,7 +297,7 @@ std::optional<Build> ensure_current(Product product, const Progress& progress, Q
         std::fprintf(stderr, "stud: %s %s was changed since it was installed\n", qPrintable(name),
                      qPrintable(have->upload));
     }
-    if (progress) progress(QStringLiteral("Checking for %1 updates").arg(name), -1);
+    if (progress) progress(QCoreApplication::translate("stud::ui::client", "Checking for %1 updates").arg(name), -1);
     // The channel Roblox put this account on; production when none.
     const QString channel = assigned_channel(prefix_dir() + QStringLiteral("/root"), product);
     if (!channel.isEmpty()) {
@@ -304,15 +305,17 @@ std::optional<Build> ensure_current(Product product, const Progress& progress, Q
     }
     const auto [upload, version] = served_build(product, channel);
     if (g_cancelled) {
-        *error = QStringLiteral("Cancelled.");
+        *error = QCoreApplication::translate("stud::ui::client", "Cancelled.");
         return std::nullopt;
     }
     if (upload.isEmpty()) {
         // Offline: run what's installed unless it was modified.
         if (have && integrity != Integrity::Changed) return have;
-        *error = have ? QStringLiteral("%1 was changed since it was installed, and Roblox could not "
-                                       "be reached to download it again.").arg(name)
-                      : QStringLiteral("Could not reach Roblox to download %1.").arg(name);
+        *error = have ? QCoreApplication::translate("stud::ui::client",
+                                                     "%1 was changed since it was installed, and Roblox "
+                                                     "could not be reached to download it again.")
+                            .arg(name)
+                      : QCoreApplication::translate("stud::ui::client", "Could not reach Roblox to download %1.").arg(name);
         return std::nullopt;
     }
     if (have && have->upload == upload && integrity == Integrity::Intact) return have;
@@ -327,8 +330,9 @@ std::optional<Build> ensure_current(Product product, const Progress& progress, Q
         QDir(clients.filePath(stale)).removeRecursively();
     }
     const QString zip_path = clients_dir(product) + "/" + upload + ".zip";
-    const QString what = have ? QStringLiteral("Updating %1 to %2").arg(name, version)
-                              : QStringLiteral("Downloading %1 %2").arg(name, version);
+    const QString what = have
+                             ? QCoreApplication::translate("stud::ui::client", "Updating %1 to %2").arg(name, version)
+                             : QCoreApplication::translate("stud::ui::client", "Downloading %1 %2").arg(name, version);
     bool fetched = false;
     for (const char* host : kSetupHosts) {
         const QString url =
@@ -344,15 +348,15 @@ std::optional<Build> ensure_current(Product product, const Progress& progress, Q
     if (!fetched) {
         QFile::remove(zip_path);
         if (g_cancelled) {
-            *error = QStringLiteral("Cancelled.");
+            *error = QCoreApplication::translate("stud::ui::client", "Cancelled.");
             return std::nullopt;
         }
         if (have && integrity != Integrity::Changed) return have;
-        *error = QStringLiteral("Could not download %1.").arg(name);
+        *error = QCoreApplication::translate("stud::ui::client", "Could not download %1.").arg(name);
         return std::nullopt;
     }
 
-    const QString unpacking = QStringLiteral("Unpacking %1 %2").arg(name, version);
+    const QString unpacking = QCoreApplication::translate("stud::ui::client", "Unpacking %1 %2").arg(name, version);
     if (progress) progress(unpacking, 0);
     const QString staging = clients_dir(product) + "/" + upload + ".partial";
     QDir(staging).removeRecursively();
@@ -385,25 +389,28 @@ std::optional<Build> ensure_current(Product product, const Progress& progress, Q
     if (!in_place) {
         QDir(staging).removeRecursively();
         if (g_cancelled) {
-            *error = QStringLiteral("Cancelled.");
+            *error = QCoreApplication::translate("stud::ui::client", "Cancelled.");
             return std::nullopt;
         }
         if (have && integrity != Integrity::Changed) return have;
-        *error = QStringLiteral("Could not unpack %1: %2").arg(name)
-                     .arg(extract_error.isEmpty() ? QStringLiteral("unexpected layout") : extract_error);
+        *error = QCoreApplication::translate("stud::ui::client", "Could not unpack %1: %2")
+                     .arg(name)
+                     .arg(extract_error.isEmpty()
+                              ? QCoreApplication::translate("stud::ui::client", "unexpected layout")
+                              : extract_error);
         return std::nullopt;
     }
 
     QSaveFile record(integrity_file(product, upload));
     if (!record.open(QIODevice::WriteOnly) ||
         record.write(code_manifest(final_dir + "/" + info(product).app)) < 0 || !record.commit()) {
-        *error = QStringLiteral("Could not record the installed %1.").arg(name);
+        *error = QCoreApplication::translate("stud::ui::client", "Could not record the installed %1.").arg(name);
         return std::nullopt;
     }
     QSaveFile marker(current_marker(product));
     if (!marker.open(QIODevice::WriteOnly) ||
         marker.write((upload + "\n" + version + "\n").toUtf8()) < 0 || !marker.commit()) {
-        *error = QStringLiteral("Could not record the installed %1.").arg(name);
+        *error = QCoreApplication::translate("stud::ui::client", "Could not record the installed %1.").arg(name);
         return std::nullopt;
     }
     remove_other_builds(product, upload);
@@ -461,10 +468,10 @@ QString find_rosemary() {
 bool ensure_prefix(const QString& rosemary, const Progress& progress, QString* error) {
     if (QFileInfo(prefix_dir() + "/root").isDir()) return true;
     if (g_cancelled) {
-        *error = QStringLiteral("Cancelled.");
+        *error = QCoreApplication::translate("stud::ui::client", "Cancelled.");
         return false;
     }
-    if (progress) progress(QStringLiteral("Setting up the macOS environment"), -1);
+    if (progress) progress(QCoreApplication::translate("stud::ui::client", "Setting up the macOS environment"), -1);
     QProcess create;
     g_process = &create;
     create.setProgram(rosemary);
@@ -483,13 +490,14 @@ bool ensure_prefix(const QString& rosemary, const Progress& progress, QString* e
         // A half-made prefix would pass for a whole one next time.
         create.waitForFinished();
         QDir(prefix_dir()).removeRecursively();
-        *error = QStringLiteral("Cancelled.");
+        *error = QCoreApplication::translate("stud::ui::client", "Cancelled.");
         return false;
     }
     if (create.exitStatus() != QProcess::NormalExit || create.exitCode() != 0 ||
         !QFileInfo(prefix_dir() + "/root").isDir()) {
-        *error = QStringLiteral("Could not set up the macOS environment (rosemary prefix create "
-                                "failed; the log has its output).");
+        *error = QCoreApplication::translate("stud::ui::client",
+                                             "Could not set up the macOS environment (rosemary prefix create "
+                                             "failed; the log has its output).");
         return false;
     }
     return true;
@@ -512,7 +520,7 @@ bool write_app_settings(const Build& build, const QJsonObject& flags, QString* e
     QSaveFile file(dir + "/ClientAppSettings.json");
     if (!file.open(QIODevice::WriteOnly) ||
         file.write(QJsonDocument(flags).toJson(QJsonDocument::Indented)) < 0 || !file.commit()) {
-        *error = QStringLiteral("Could not write ClientAppSettings.json.");
+        *error = QCoreApplication::translate("stud::ui::client", "Could not write ClientAppSettings.json.");
         return false;
     }
     return true;

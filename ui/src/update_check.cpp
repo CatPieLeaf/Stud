@@ -3,6 +3,7 @@
 #include "github_mirror.h"
 #include "notifications.h"
 
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include "open_location.h"
 #include <QFile>
@@ -65,7 +66,7 @@ QNetworkRequest release_request(const QString& url) {
 void fail_update(const QString& why) {
     g_updating = false;
     std::fprintf(stderr, "stud: self-update failed: %s\n", qPrintable(why));
-    send_notification(QStringLiteral("Stud could not update"), why);
+    send_notification(QCoreApplication::translate("stud::ui::UpdateCheck", "Stud could not update"), why);
 }
 
 // Downloads beside the running AppImage and renames it over once the SHA-1 matches.
@@ -84,7 +85,7 @@ void update_appimage(const QString& target) {
         }
         if (sums->error() != QNetworkReply::NoError || sha1.isEmpty()) {
             manager->deleteLater();
-            fail_update(QStringLiteral("The release's checksum could not be read."));
+            fail_update(QCoreApplication::translate("stud::ui::UpdateCheck", "The release's checksum could not be read."));
             return;
         }
         const QString partial = target + QStringLiteral(".download");
@@ -98,11 +99,13 @@ void update_appimage(const QString& target) {
         download->out.setFileName(partial);
         if (!download->out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
             manager->deleteLater();
-            fail_update(QStringLiteral("%1 is not writable.").arg(QFileInfo(target).absolutePath()));
+            fail_update(
+                QCoreApplication::translate("stud::ui::UpdateCheck", "%1 is not writable.").arg(QFileInfo(target).absolutePath()));
             return;
         }
-        send_notification(QStringLiteral("Updating Stud"),
-                          QStringLiteral("Downloading Stud %1.").arg(UpdateCheck::latestVersion()));
+        send_notification(QCoreApplication::translate("stud::ui::UpdateCheck", "Updating Stud"),
+                          QCoreApplication::translate("stud::ui::UpdateCheck", "Downloading Stud %1.")
+                              .arg(UpdateCheck::latestVersion()));
         const auto take = [download](const QByteArray& chunk) {
             if (download->out.write(chunk) != chunk.size()) download->write_failed = true;
             download->hash.addData(chunk);
@@ -120,8 +123,9 @@ void update_appimage(const QString& target) {
             manager->deleteLater();
             if (!written || got != sha1) {
                 QFile::remove(partial);
-                fail_update(written ? QStringLiteral("The download did not match the release.")
-                                    : QStringLiteral("The download did not finish."));
+                fail_update(written
+                                ? QCoreApplication::translate("stud::ui::UpdateCheck", "The download did not match the release.")
+                                : QCoreApplication::translate("stud::ui::UpdateCheck", "The download did not finish."));
                 return;
             }
             ::chmod(QFile::encodeName(partial).constData(), 0755);
@@ -129,13 +133,16 @@ void update_appimage(const QString& target) {
             if (std::rename(QFile::encodeName(partial).constData(),
                             QFile::encodeName(target).constData()) != 0) {
                 QFile::remove(partial);
-                fail_update(QStringLiteral("The new AppImage could not replace %1.").arg(target));
+                fail_update(
+                    QCoreApplication::translate("stud::ui::UpdateCheck", "The new AppImage could not replace %1.")
+                        .arg(target));
                 return;
             }
             g_updating = false;
             std::printf("stud: updated the AppImage to %s\n", qPrintable(UpdateCheck::latestVersion()));
-            send_notification(QStringLiteral("Stud updated"),
-                              QStringLiteral("Restart Stud to use version %1.").arg(UpdateCheck::latestVersion()));
+            send_notification(QCoreApplication::translate("stud::ui::UpdateCheck", "Stud updated"),
+                              QCoreApplication::translate("stud::ui::UpdateCheck", "Restart Stud to use version %1.")
+                                  .arg(UpdateCheck::latestVersion()));
         });
     });
 }

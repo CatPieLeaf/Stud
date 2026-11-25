@@ -82,19 +82,19 @@ bool Tray::show() {
     // Kept for the update entry, added if the check finds one.
     menu_ = menu;
     menu->addAction(QIcon::fromTheme(QStringLiteral("configure"), QIcon::fromTheme(QStringLiteral("preferences-system"))),
-                    QStringLiteral("Stud settings"), this, &Tray::openSettings);
+                    tr("Stud settings"), this, &Tray::openSettings);
     // Shown only while in a server someone else can join.
     QAction* copy_link = menu->addAction(QIcon::fromTheme(QStringLiteral("edit-copy")),
-                                         QStringLiteral("Copy server link"), this, &Tray::copyServerLink);
+                                         tr("Copy server link"), this, &Tray::copyServerLink);
     copy_link->setVisible(false);
     connect(menu, &QMenu::aboutToShow, this,
             [copy_link] { copy_link->setVisible(!current_server_link().isEmpty()); });
-    menu->addAction(QIcon::fromTheme(QStringLiteral("document-save")), QStringLiteral("Export logs"), this,
+    menu->addAction(QIcon::fromTheme(QStringLiteral("document-save")), tr("Export logs"), this,
                     &Tray::exportLogs);
     menu->addSeparator();
-    menu->addAction(QIcon::fromTheme(QStringLiteral("help-about")), QStringLiteral("About Stud"), this, &Tray::showAbout);
+    menu->addAction(QIcon::fromTheme(QStringLiteral("help-about")), tr("About Stud"), this, &Tray::showAbout);
     menu->addSeparator();
-    menu->addAction(QIcon::fromTheme(QStringLiteral("application-exit")), QStringLiteral("Exit Stud"), this,
+    menu->addAction(QIcon::fromTheme(QStringLiteral("application-exit")), tr("Exit Stud"), this,
                     &Tray::quitStud);
     icon_->setContextMenu(menu);
     icon_->show();
@@ -144,10 +144,10 @@ bool Tray::show() {
 // opening the menu. No popup: an update isn't worth interrupting a game.
 void Tray::showUpdateAvailable(const QString& latestVersion) {
     if (icon_ == nullptr || menu_ == nullptr || updateAction_ != nullptr) return;
-    updateAction_ = new QAction(QStringLiteral("\u26a0\ufe0f Update Stud"), menu_);
+    updateAction_ = new QAction(tr("\u26a0\ufe0f Update Stud"), menu_);
     connect(updateAction_, &QAction::triggered, this, [] { UpdateCheck::open(); });
     icon_->setIcon(QIcon(QStringLiteral(":/stud-logo-update.png")));
-    icon_->setToolTip(QStringLiteral("Stud: version %1 is available").arg(latestVersion));
+    icon_->setToolTip(tr("Stud: version %1 is available").arg(latestVersion));
     // At the top: the only entry that is news.
     menu_->insertAction(menu_->actions().value(0), updateAction_);
     menu_->insertSeparator(menu_->actions().value(1));
@@ -172,7 +172,7 @@ void Tray::copyServerLink() {
         copier.start();
         if (!copier.waitForStarted(2000)) {
             send_notification(QStringLiteral("Stud"),
-                              QStringLiteral("Could not copy: this desktop needs wl-clipboard installed."));
+                              tr("Could not copy: this desktop needs wl-clipboard installed."));
             return;
         }
         copier.write(link.toUtf8());
@@ -181,7 +181,7 @@ void Tray::copyServerLink() {
         copier.waitForFinished(2000);
     }
     QApplication::clipboard()->setText(link);
-    send_notification(QStringLiteral("Stud"), QStringLiteral("Server link copied."), QString(),
+    send_notification(QStringLiteral("Stud"), tr("Server link copied."), QString(),
                       {/*transient=*/true, /*suppress_sound=*/false});
 }
 
@@ -197,7 +197,7 @@ void Tray::showAbout() {
     static QPointer<QDialog> about;
     if (about.isNull()) {
         about = new QDialog();
-        about->setWindowTitle(QStringLiteral("About Stud"));
+        about->setWindowTitle(tr("About Stud"));
         about->setAttribute(Qt::WA_DeleteOnClose);
         auto* layout = new QVBoxLayout(about);
         layout->setSizeConstraint(QLayout::SetFixedSize);
@@ -218,7 +218,7 @@ void Tray::showAbout() {
         auto* lead = new QVBoxLayout();
         lead->addWidget(title, 0, Qt::AlignLeft | Qt::AlignTop);
         lead->addSpacing(about->style()->pixelMetric(QStyle::PM_LayoutVerticalSpacing));
-        auto* text = new QLabel(QStringLiteral("Runs Roblox's real, unmodified macOS client on Linux."), about);
+        auto* text = new QLabel(tr("Runs Roblox's real, unmodified macOS client on Linux."), about);
         text->setWordWrap(true);
         // Two lines, each two thirds of the one-line width. A fixed width, since a
         // wrapping label would otherwise shrink the fixed-size dialog to three lines.
@@ -228,8 +228,8 @@ void Tray::showAbout() {
         lead->addStretch();
         header->addLayout(lead, 1);
         auto* credits = new QVBoxLayout();
-        auto* version = new QLabel(QStringLiteral("Version " STUD_VERSION), about);
-        auto* by = new QLabel(QStringLiteral("By CatPieLeaf"), about);
+        auto* version = new QLabel(tr("Version %1").arg(QString::fromLatin1(STUD_VERSION)), about);
+        auto* by = new QLabel(tr("By %1").arg(QStringLiteral("CatPieLeaf")), about);
         credits->addWidget(version, 0, Qt::AlignRight);
         credits->addWidget(by, 0, Qt::AlignRight);
         credits->addStretch();
