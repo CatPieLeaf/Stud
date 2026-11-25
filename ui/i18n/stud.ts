@@ -639,6 +639,14 @@ The log for this session has been written and can be exported.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Language</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>System language</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Show in system tray</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1385,6 +1393,14 @@ Finding where a server is asks ipwho.is about the server&apos;s address, never y
     </message>
     <message>
         <source>Nothing was saved. Fix or delete the settings file first: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Language saved. Restart Stud to apply it.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Settings saved. They apply the next time Roblox starts.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
