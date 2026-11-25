@@ -133,7 +133,7 @@ if(Qt6LinguistTools_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h")
     qt_add_lupdate(stud-ui
-        TS_FILES "${CMAKE_CURRENT_SOURCE_DIR}/i18n/stud.ts"
+        TS_FILES "${CMAKE_CURRENT_SOURCE_DIR}/i18n/stud.ts" ${stud_ui_catalogues}
         SOURCES ${stud_ui_source_catalogue}
         OPTIONS -no-obsolete -locations none -source-language en)
 
