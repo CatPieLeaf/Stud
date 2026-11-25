@@ -112,7 +112,9 @@ QFrame* permission_box(QWidget* parent, QCheckBox* toggle, const QString& what,
     if (missing.isEmpty()) return nullptr;
     QFrame* box = command_warning(
         parent,
-        QStringLiteral("%1 need a permission the Flatpak doesn't have. Run this in a terminal, then restart Stud:")
+        QCoreApplication::translate("stud::ui::SettingsWindow",
+                                    "%1 need a permission the Flatpak doesn't have. Run this in a terminal, "
+                                    "then restart Stud:")
             .arg(what),
         flatpak_override_command(missing));
     box->setVisible(toggle->isChecked());
@@ -122,7 +124,7 @@ QFrame* permission_box(QWidget* parent, QCheckBox* toggle, const QString& what,
 }  // namespace
 
 SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
-    setWindowTitle("Stud Settings");
+    setWindowTitle(tr("Stud Settings"));
 
     auto* layout = new QVBoxLayout(this);
     auto* body = new QHBoxLayout();
@@ -166,91 +168,92 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     };
 
     // ---- General -------------------------------------------------------
-    auto* general = add_tab("General");
-    trayCheck_ = new QCheckBox("Show in system tray", this);
+    auto* general = add_tab(tr("General"));
+    trayCheck_ = new QCheckBox(tr("Show in system tray"), this);
     general->addWidget(trayCheck_);
-    playerDirectlyCheck_ = new QCheckBox("Open Roblox Player directly, without the welcome page", this);
+    playerDirectlyCheck_ = new QCheckBox(tr("Open Roblox Player directly, without the welcome page"), this);
     general->addWidget(playerDirectlyCheck_);
-    gamemodeCheck_ = new QCheckBox("GameMode", this);
-    gamemodeCheck_->setToolTip("Ask Feral GameMode for its performance settings while Roblox runs.");
+    gamemodeCheck_ = new QCheckBox(tr("GameMode"), this);
+    gamemodeCheck_->setToolTip(tr("Ask Feral GameMode for its performance settings while Roblox runs."));
     general->addWidget(gamemodeCheck_);
-    controllersCheck_ = new QCheckBox("Game controllers", this);
+    controllersCheck_ = new QCheckBox(tr("Game controllers"), this);
     controllersCheck_->setVisible(stud::config::in_flatpak());
     general->addWidget(controllersCheck_);
-    if (QFrame* box = permission_box(this, controllersCheck_, "Game controllers", missing_controller_permissions)) {
+    if (QFrame* box =
+            permission_box(this, controllersCheck_, tr("Game controllers"), missing_controller_permissions)) {
         general->addWidget(box);
     }
     auto* cleanerRow = new QHBoxLayout();
-    cleanerRow->addWidget(new QLabel("Delete logs and caches older than", this));
+    cleanerRow->addWidget(new QLabel(tr("Delete logs and caches older than"), this));
     cleanerSpin_ = new QSpinBox(this);
     cleanerSpin_->setRange(0, std::numeric_limits<int>::max());
-    cleanerSpin_->setSpecialValueText("Never");
-    cleanerSpin_->setSuffix(" days");
+    cleanerSpin_->setSpecialValueText(tr("Never"));
+    cleanerSpin_->setSuffix(tr(" days"));
     cleanerRow->addWidget(cleanerSpin_);
     cleanerRow->addStretch();
     general->addLayout(cleanerRow);
 
-    closeOnLeaveCheck_ = new QCheckBox("Close Roblox when leaving a game", this);
+    closeOnLeaveCheck_ = new QCheckBox(tr("Close Roblox when leaving a game"), this);
     general->addWidget(closeOnLeaveCheck_);
-    serverRegionCheck_ = new QCheckBox("Notify the server region on join", this);
-    serverRegionCheck_->setToolTip("Names the country of the game server each time you join one.");
+    serverRegionCheck_ = new QCheckBox(tr("Notify the server region on join"), this);
+    serverRegionCheck_->setToolTip(tr("Names the country of the game server each time you join one."));
     general->addWidget(serverRegionCheck_);
 
-    general->addWidget(new QLabel("MacOS title bar"));
+    general->addWidget(new QLabel(tr("MacOS title bar")));
     titleBarCombo_ = new QComboBox(this);
-    titleBarCombo_->addItem("MacOS title bar only", QStringLiteral("macos-no-menu"));
-    titleBarCombo_->addItem("MacOS title bar and menu bar", QStringLiteral("macos"));
-    titleBarCombo_->addItem("Linux native title bar", QStringLiteral("native"));
+    titleBarCombo_->addItem(tr("MacOS title bar only"), QStringLiteral("macos-no-menu"));
+    titleBarCombo_->addItem(tr("MacOS title bar and menu bar"), QStringLiteral("macos"));
+    titleBarCombo_->addItem(tr("Linux native title bar"), QStringLiteral("native"));
     general->addWidget(titleBarCombo_);
 
-    general->addWidget(new QLabel("Notifications"));
+    general->addWidget(new QLabel(tr("Notifications")));
     notificationsCombo_ = new QComboBox(this);
-    notificationsCombo_->addItem("In Roblox when it is fullscreen", QStringLiteral("fullscreen"));
-    notificationsCombo_->addItem("Always in Roblox", QStringLiteral("always"));
-    notificationsCombo_->addItem("System notifications", QStringLiteral("system"));
+    notificationsCombo_->addItem(tr("In Roblox when it is fullscreen"), QStringLiteral("fullscreen"));
+    notificationsCombo_->addItem(tr("Always in Roblox"), QStringLiteral("always"));
+    notificationsCombo_->addItem(tr("System notifications"), QStringLiteral("system"));
     notificationsCombo_->setToolTip(
-        "Where Stud's notifications show while Roblox or Studio is open. The desktop hides its own "
-        "over a fullscreen game, so Stud can show a Mac-style one in Roblox instead.");
+        tr("Where Stud's notifications show while Roblox or Studio is open. The desktop hides its own "
+           "over a fullscreen game, so Stud can show a Mac-style one in Roblox instead."));
     general->addWidget(notificationsCombo_);
 
     // Only offered on Wayland desktops that also run XWayland.
-    auto* displayBackendLabel = new QLabel("Display server", this);
+    auto* displayBackendLabel = new QLabel(tr("Display server"), this);
     general->addWidget(displayBackendLabel);
     displayBackendCombo_ = new QComboBox(this);
-    displayBackendCombo_->addItem("Wayland", QStringLiteral("wayland"));
-    displayBackendCombo_->addItem("X11 (XWayland)", QStringLiteral("x11"));
+    displayBackendCombo_->addItem(tr("Wayland"), QStringLiteral("wayland"));
+    displayBackendCombo_->addItem(tr("X11 (XWayland)"), QStringLiteral("x11"));
     general->addWidget(displayBackendCombo_);
     const bool backend_choice = !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY") &&
                                 !qEnvironmentVariableIsEmpty("DISPLAY");
     displayBackendLabel->setVisible(backend_choice);
     displayBackendCombo_->setVisible(backend_choice);
 
-    general->addWidget(new QLabel("Launch Roblox through", this));
+    general->addWidget(new QLabel(tr("Launch Roblox through"), this));
     wrapperEdit_ = new QLineEdit(this);
-    wrapperEdit_->setPlaceholderText("gamescope -f --");
-    wrapperEdit_->setToolTip("A command Roblox starts through, such as gamescope or prime-run. "
-                             "Quotes work as in a shell. Empty for none.");
+    wrapperEdit_->setPlaceholderText(tr("gamescope -f --"));
+    wrapperEdit_->setToolTip(tr("A command Roblox starts through, such as gamescope or prime-run. "
+                                "Quotes work as in a shell. Empty for none."));
     general->addWidget(wrapperEdit_);
-    general->addWidget(new QLabel("Environment variables", this));
+    general->addWidget(new QLabel(tr("Environment variables"), this));
     environmentEdit_ = new QPlainTextEdit(this);
-    environmentEdit_->setPlaceholderText("NAME=value, one a line");
-    environmentEdit_->setToolTip("Set for Roblox when it starts, after Stud's own, so one here wins "
-                                 "over Stud's value for the same name. Lines starting with # are "
-                                 "skipped.");
+    environmentEdit_->setPlaceholderText(tr("NAME=value, one a line"));
+    environmentEdit_->setToolTip(tr("Set for Roblox when it starts, after Stud's own, so one here wins "
+                                    "over Stud's value for the same name. Lines starting with # are "
+                                    "skipped."));
     environmentEdit_->setTabChangesFocus(true);
     environmentEdit_->setMaximumHeight(environmentEdit_->fontMetrics().lineSpacing() * 5);
     general->addWidget(environmentEdit_);
 
-    jsdelivrCheck_ = new QCheckBox("Use jsDelivr mirror instead of GitHub", this);
-    jsdelivrCheck_->setToolTip("Update checks and customization downloads go through jsDelivr's mirror of "
-                               "GitHub first, for networks where GitHub is slow or blocked.");
+    jsdelivrCheck_ = new QCheckBox(tr("Use jsDelivr mirror instead of GitHub"), this);
+    jsdelivrCheck_->setToolTip(tr("Update checks and customization downloads go through jsDelivr's mirror of "
+                                  "GitHub first, for networks where GitHub is slow or blocked."));
     general->addWidget(jsdelivrCheck_);
 
     general->addStretch();
 
     // ---- Graphics ------------------------------------------------------
-    auto* graphics = add_tab("Graphics");
-    graphics->addWidget(new QLabel("GPU"));
+    auto* graphics = add_tab(tr("Graphics"));
+    graphics->addWidget(new QLabel(tr("GPU")));
     gpuCombo_ = new QComboBox(this);
     for (const auto& gpu : enumerate_gpus()) {
         gpuCombo_->addItem(QString::fromStdString(gpu.name), gpu.device_index);
@@ -259,51 +262,52 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
                                Qt::UserRole + 2);
     }
     if (gpuCombo_->count() == 0) {
-        gpuCombo_->addItem("No GPUs found");
+        gpuCombo_->addItem(tr("No GPUs found"));
         gpuCombo_->setEnabled(false);
     }
     graphics->addWidget(gpuCombo_);
 
-    graphics->addWidget(new QLabel("Renderer"));
+    graphics->addWidget(new QLabel(tr("Renderer")));
     rendererCombo_ = new QComboBox(this);
-    rendererCombo_->addItem("Vulkan", QStringLiteral("vulkan"));
-    rendererCombo_->addItem("OpenGL", QStringLiteral("opengl"));
-    rendererCombo_->setToolTip("Vulkan: Roblox's Metal renderer, run on Vulkan.\n"
-                               "OpenGL: Roblox's OpenGL renderer, for hardware Vulkan does not run on.");
+    rendererCombo_->addItem(tr("Vulkan"), QStringLiteral("vulkan"));
+    rendererCombo_->addItem(tr("OpenGL"), QStringLiteral("opengl"));
+    rendererCombo_->setToolTip(tr("Vulkan: Roblox's Metal renderer, run on Vulkan.\n"
+                                  "OpenGL: Roblox's OpenGL renderer, for hardware Vulkan does not run on."));
     graphics->addWidget(rendererCombo_);
 
-    graphics->addWidget(new QLabel("Presentation"));
+    graphics->addWidget(new QLabel(tr("Presentation")));
     presentationCombo_ = new QComboBox(this);
-    presentationCombo_->addItem("VSync", QStringLiteral("vsync"));
-    presentationCombo_->addItem("Adaptive VSync", QStringLiteral("adaptive"));
-    presentationCombo_->addItem("No VSync, no tearing", QStringLiteral("mailbox"));
-    presentationCombo_->addItem("No VSync", QStringLiteral("immediate"));
+    presentationCombo_->addItem(tr("VSync"), QStringLiteral("vsync"));
+    presentationCombo_->addItem(tr("Adaptive VSync"), QStringLiteral("adaptive"));
+    presentationCombo_->addItem(tr("No VSync, no tearing"), QStringLiteral("mailbox"));
+    presentationCombo_->addItem(tr("No VSync"), QStringLiteral("immediate"));
     presentationCombo_->setToolTip(
-        "VSync: every frame waits for the display's refresh. Smooth, and the frame rate follows the display.\n"
-        "Adaptive VSync: waits, unless a frame is already late; then it tears instead of halving the frame rate.\n"
-        "No VSync, no tearing: uncapped, and the newest frame is shown at each refresh. On OpenGL, the same as No VSync.\n"
-        "No VSync: uncapped, and frames are shown at once, so they may tear. The lowest latency.");
+        tr("VSync: every frame waits for the display's refresh. Smooth, and the frame rate follows the display.\n"
+           "Adaptive VSync: waits, unless a frame is already late; then it tears instead of halving the frame rate.\n"
+           "No VSync, no tearing: uncapped, and the newest frame is shown at each refresh. On OpenGL, "
+           "the same as No VSync.\n"
+           "No VSync: uncapped, and frames are shown at once, so they may tear. The lowest latency."));
     graphics->addWidget(presentationCombo_);
 
     auto* scaleRow = new QHBoxLayout();
-    scaleRow->addWidget(new QLabel("Render resolution", this));
+    scaleRow->addWidget(new QLabel(tr("Render resolution"), this));
     renderScaleSpin_ = new QSpinBox(this);
     renderScaleSpin_->setRange(1, 100);
-    renderScaleSpin_->setSuffix("%");
-    renderScaleSpin_->setToolTip("The game is drawn at this share of the window's size and scaled "
-                                 "back up as it is shown. Lower draws fewer pixels: it helps when "
-                                 "the GPU is the limit, and softens the picture and the menus with it.\n"
-                                 "Vulkan only.");
+    renderScaleSpin_->setSuffix(tr("%"));
+    renderScaleSpin_->setToolTip(tr("The game is drawn at this share of the window's size and scaled "
+                                    "back up as it is shown. Lower draws fewer pixels: it helps when "
+                                    "the GPU is the limit, and softens the picture and the menus with it.\n"
+                                    "Vulkan only."));
     scaleRow->addWidget(renderScaleSpin_);
     upscalerCombo_ = new QComboBox(this);
-    upscalerCombo_->addItem("RAVU-Zoom AR", QStringLiteral("ravu-ar"));
-    upscalerCombo_->addItem("SGSR1 ED", QStringLiteral("sgsr-ed"));
+    upscalerCombo_->addItem(tr("RAVU-Zoom AR"), QStringLiteral("ravu-ar"));
+    upscalerCombo_->addItem(tr("SGSR1 ED"), QStringLiteral("sgsr-ed"));
     upscalerCombo_->setToolTip(
-        "RAVU-Zoom AR: the better picture, and about three times the cost. Trained\n"
-        "filter weights, clamped so a hard edge cannot grow a bright or dark border.\n"
-        "\n"
-        "SGSR1 ED: the lightweight one. Reconstructs edges from the pixels alone.\n"
-        "The one to pick on a laptop or an integrated GPU.");
+        tr("RAVU-Zoom AR: the better picture, and about three times the cost. Trained\n"
+           "filter weights, clamped so a hard edge cannot grow a bright or dark border.\n"
+           "\n"
+           "SGSR1 ED: the lightweight one. Reconstructs edges from the pixels alone.\n"
+           "The one to pick on a laptop or an integrated GPU."));
     scaleRow->addWidget(upscalerCombo_);
     graphics->addLayout(scaleRow);
     const auto scaling = [this] { upscalerCombo_->setEnabled(renderScaleSpin_->value() < 100); };
@@ -316,50 +320,50 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     backgroundFpsSlider_->setRange(1, stud::config::kBackgroundFpsUnlimited + 1);
     backgroundFpsSlider_->setPageStep(10);
     backgroundFpsSlider_->setToolTip(
-        "Frames per second while Roblox is not the window you are using: minimised,\n"
-        "on another workspace, covered, or alt-tabbed away. All the way right is Unlimited.");
+        tr("Frames per second while Roblox is not the window you are using: minimised,\n"
+           "on another workspace, covered, or alt-tabbed away. All the way right is Unlimited."));
     graphics->addWidget(backgroundFpsSlider_);
     connect(backgroundFpsSlider_, &QSlider::valueChanged, this,
             &SettingsWindow::onBackgroundFpsChanged);
 
-    mangohudCheck_ = new QCheckBox("MangoHud overlay", this);
-    mangohudCheck_->setToolTip("Shows MangoHud's performance overlay over Roblox.");
+    mangohudCheck_ = new QCheckBox(tr("MangoHud overlay"), this);
+    mangohudCheck_->setToolTip(tr("Shows MangoHud's performance overlay over Roblox."));
     graphics->addWidget(mangohudCheck_);
 
     graphics->addStretch();
 
     // ---- Discord RPC ---------------------------------------------------
-    auto* discord = add_tab("Discord RPC");
-    discordCheck_ = new QCheckBox("Discord Rich Presence", this);
-    discordCheck_->setToolTip("Shows the game you are playing on your Discord profile, with what "
-                              "the game itself reports.");
+    auto* discord = add_tab(tr("Discord RPC"));
+    discordCheck_ = new QCheckBox(tr("Discord Rich Presence"), this);
+    discordCheck_->setToolTip(tr("Shows the game you are playing on your Discord profile, with what "
+                                 "the game itself reports."));
     discord->addWidget(discordCheck_);
-    discordJoinCheck_ = new QCheckBox("Show a Join server button", this);
+    discordJoinCheck_ = new QCheckBox(tr("Show a Join server button"), this);
     discord->addWidget(discordJoinCheck_);
     connect(discordCheck_, &QCheckBox::toggled, discordJoinCheck_, &QWidget::setEnabled);
-    if (QFrame* box = permission_box(this, discordCheck_, "Discord Rich Presence", missing_discord_permissions)) {
+    if (QFrame* box = permission_box(this, discordCheck_, tr("Discord Rich Presence"), missing_discord_permissions)) {
         discord->addWidget(box);
     }
     discord->addStretch();
 
     // ---- Customizations ----------------------------------------------------------
-    auto* customizeTab = add_tab("Customize");
+    auto* customizeTab = add_tab(tr("Customize"));
     customizeTab->addWidget(new CustomizePage([this] { onImportBootstrapperClicked(); }, this));
     customizeTab->addStretch();
 
     // ---- FFlags --------------------------------------------------------
-    buildRobloxTab(add_tab("Roblox"));
-    buildHistoryTab(add_tab("History"));
+    buildRobloxTab(add_tab(tr("Roblox")));
+    buildHistoryTab(add_tab(tr("History")));
     {
-        const auto parts = add_parts("FFlags", {"Presets", "FFlag editor"});
+        const auto parts = add_parts(tr("FFlags"), {tr("Presets"), tr("FFlag editor")});
         buildFlagsTab(parts[0], parts[1]);
     }
 
-    buildStudioTab(add_tab("Studio"));
-    buildDebugTab(add_tab("Debug"));
+    buildStudioTab(add_tab(tr("Studio")));
+    buildDebugTab(add_tab(tr("Debug")));
 
     // ---- About ---------------------------------------------------------
-    auto* about = add_tab("About");
+    auto* about = add_tab(tr("About"));
     auto* cube = new CubeView(this);
     cube->setFixedSize(128, 128);
     // Ten clicks on the cube, with an NVIDIA GPU selected.
@@ -374,11 +378,12 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     logo->setAlignment(Qt::AlignCenter);
     about->addWidget(logo);
     auto* aboutText = new QLabel(
-        "<div style='text-align:center'>"
-        "<p><b>Version " STUD_VERSION "</b></p>"
-        "<p>Runs Roblox's real, unmodified macOS client<br>"
-        "on Linux.</p>"
-        "</div>",
+        tr("<div style='text-align:center'>"
+           "<p><b>Version %1</b></p>"
+           "<p>Runs Roblox's real, unmodified macOS client<br>"
+           "on Linux.</p>"
+           "</div>")
+            .arg(QString::fromLatin1(STUD_VERSION)),
         this);
     aboutText->setTextFormat(Qt::RichText);
     aboutText->setAlignment(Qt::AlignCenter);
@@ -400,7 +405,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     // Shown only while a session runs, to compare settings quickly.
     restartButton_ = new QPushButton(this);
     paintRestartIcon();
-    restartButton_->setToolTip("Save and restart Stud");
+    restartButton_->setToolTip(tr("Save and restart Stud"));
     // Icon only; paintRestartIcon() falls back to a word when there is no glyph.
     if (!restartButton_->icon().isNull()) {
         restartButton_->setFixedWidth(36);
@@ -409,7 +414,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     buttonRow->addWidget(restartButton_);
     connect(restartButton_, &QPushButton::clicked, this, &SettingsWindow::onRestartClicked);
 
-    auto* saveButton = new QPushButton("Save", this);
+    auto* saveButton = new QPushButton(tr("Save"), this);
     saveButton->setIcon(mono_icon("document-save", QStyle::SP_DialogSaveButton));
     buttonRow->addWidget(saveButton);
     layout->addLayout(buttonRow);
@@ -487,7 +492,7 @@ bool SettingsWindow::eventFilter(QObject* watched, QEvent* event) {
         const auto reset = resets_.constFind(watched);
         if (reset != resets_.constEnd()) {
             (*reset)();
-            statusLabel_->setText("Reset to default. Save to keep it.");
+            statusLabel_->setText(tr("Reset to default. Save to keep it."));
             return true;
         }
     }
@@ -504,11 +509,13 @@ std::optional<QJsonObject> parse_flags(const QString& text, QString* error) {
     QJsonParseError parse{};
     const QJsonDocument doc = QJsonDocument::fromJson(text.toUtf8(), &parse);
     if (parse.error != QJsonParseError::NoError) {
-        *error = QStringLiteral("%1 (at character %2)").arg(parse.errorString()).arg(parse.offset);
+        *error = QCoreApplication::translate("stud::ui::SettingsWindow", "%1 (at character %2)")
+                     .arg(parse.errorString())
+                     .arg(parse.offset);
         return std::nullopt;
     }
     if (!doc.isObject()) {
-        *error = QStringLiteral("it is not a JSON object");
+        *error = QCoreApplication::translate("stud::ui::SettingsWindow", "it is not a JSON object");
         return std::nullopt;
     }
     return doc.object();
@@ -537,15 +544,15 @@ void SettingsWindow::setBackgroundFps(int fps) {
 
 void SettingsWindow::onBackgroundFpsChanged(int value) {
     backgroundFpsLabel_->setText(value > stud::config::kBackgroundFpsUnlimited
-                                     ? QStringLiteral("Background frame rate: Unlimited")
-                                     : QStringLiteral("Background frame rate: %1 FPS").arg(value));
+                                     ? tr("Background frame rate: Unlimited")
+                                     : tr("Background frame rate: %1 FPS").arg(value));
 }
 
 // The JSON editor is the single source: presets rewrite it, and it sets the presets.
 void SettingsWindow::buildFlagsTab(QVBoxLayout* presets_tab, QVBoxLayout* tab) {
     flagsEdit_ = new QPlainTextEdit(this);
     flagsEdit_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-    flagsEdit_->setPlaceholderText("{\n    \"FIntDebugForceMSAASamples\": \"4\"\n}");
+    flagsEdit_->setPlaceholderText(tr("{\n    \"FIntDebugForceMSAASamples\": \"4\"\n}"));
 
     auto* presets = new QGridLayout();
     int row = 0;
@@ -553,7 +560,7 @@ void SettingsWindow::buildFlagsTab(QVBoxLayout* presets_tab, QVBoxLayout* tab) {
         QString error;
         auto flags = parse_flags(flagsEdit_->toPlainText(), &error);
         if (!flags) {
-            statusLabel_->setText(QString("Fix the flags first: %1").arg(error).toHtmlEscaped());
+            statusLabel_->setText(tr("Fix the flags first: %1").arg(error).toHtmlEscaped());
             return;
         }
         change(*flags);
@@ -604,13 +611,13 @@ void SettingsWindow::buildFlagsTab(QVBoxLayout* presets_tab, QVBoxLayout* tab) {
     auto* profileBox = new QComboBox(this);
     profileBox->addItems(fflags::profiles());
     profileBox->setMinimumContentsLength(12);
-    auto* load = new QPushButton("Load", this);
-    auto* saveAs = new QPushButton("Save as...", this);
-    auto* remove = new QPushButton("Delete", this);
+    auto* load = new QPushButton(tr("Load"), this);
+    auto* saveAs = new QPushButton(tr("Save as..."), this);
+    auto* remove = new QPushButton(tr("Delete"), this);
     load->setIcon(mono_icon("document-open", QStyle::SP_DialogOpenButton));
     saveAs->setIcon(mono_icon("document-save-as", QStyle::SP_DialogSaveButton));
     remove->setIcon(mono_icon("edit-delete", QStyle::SP_TrashIcon));
-    profiles->addWidget(new QLabel("Profile", this));
+    profiles->addWidget(new QLabel(tr("Profile"), this));
     profiles->addWidget(profileBox, 1);
     profiles->addWidget(load);
     profiles->addWidget(saveAs);
@@ -619,16 +626,16 @@ void SettingsWindow::buildFlagsTab(QVBoxLayout* presets_tab, QVBoxLayout* tab) {
     connect(load, &QPushButton::clicked, this, [this, profileBox] {
         if (profileBox->currentText().isEmpty()) return;
         flagsEdit_->setPlainText(format_flags(fflags::load_profile(profileBox->currentText())));
-        statusLabel_->setText(QStringLiteral("Profile loaded. Save to use it."));
+        statusLabel_->setText(tr("Profile loaded. Save to use it."));
     });
     connect(saveAs, &QPushButton::clicked, this, [this, profileBox] {
         QString error;
         const auto flags = parse_flags(flagsEdit_->toPlainText(), &error);
         if (!flags) {
-            statusLabel_->setText(QString("Fix the flags first: %1").arg(error).toHtmlEscaped());
+            statusLabel_->setText(tr("Fix the flags first: %1").arg(error).toHtmlEscaped());
             return;
         }
-        const QString name = QInputDialog::getText(this, "Save FFlag profile", "Name");
+        const QString name = QInputDialog::getText(this, tr("Save FFlag profile"), tr("Name"));
         if (name.trimmed().isEmpty() || !fflags::save_profile(name.trimmed(), *flags)) return;
         profileBox->clear();
         profileBox->addItems(fflags::profiles());
@@ -646,14 +653,14 @@ void SettingsWindow::buildFlagsTab(QVBoxLayout* presets_tab, QVBoxLayout* tab) {
     flagsWarning_->setWordWrap(true);
     tab->addWidget(flagsWarning_);
     auto* buttons = new QHBoxLayout();
-    auto* importButton = new QPushButton("Import JSON...", this);
+    auto* importButton = new QPushButton(tr("Import JSON..."), this);
     importButton->setIcon(mono_icon("document-import", QStyle::SP_DialogOpenButton));
-    importButton->setToolTip("Add the flags of a JSON file to these; a flag both have takes the "
-                             "imported value.");
+    importButton->setToolTip(tr("Add the flags of a JSON file to these; a flag both have takes the "
+                                "imported value."));
     connect(importButton, &QPushButton::clicked, this, &SettingsWindow::onImportFlagsClicked);
-    auto* clean = new QPushButton("Clean list", this);
+    auto* clean = new QPushButton(tr("Clean list"), this);
     clean->setIcon(mono_icon("edit-clear", QStyle::SP_DialogDiscardButton));
-    clean->setToolTip("Remove the flags Roblox ignores: those not on its allowlist.");
+    clean->setToolTip(tr("Remove the flags Roblox ignores: those not on its allowlist."));
     connect(clean, &QPushButton::clicked, this, [edit_flags] {
         edit_flags([](QJsonObject& f) {
             for (const QString& name : fflags::not_allowlisted(f)) f.remove(name);
@@ -668,14 +675,14 @@ void SettingsWindow::buildFlagsTab(QVBoxLayout* presets_tab, QVBoxLayout* tab) {
         QString error;
         const auto flags = parse_flags(flagsEdit_->toPlainText(), &error);
         if (!flags) {
-            flagsWarning_->setText(QString("Not valid JSON: %1").arg(error).toHtmlEscaped());
+            flagsWarning_->setText(tr("Not valid JSON: %1").arg(error).toHtmlEscaped());
             return;
         }
         for (const auto& refresh : flagRefresh_) refresh(*flags);
         const QStringList ignored = fflags::not_allowlisted(*flags);
         flagsWarning_->setText(ignored.isEmpty()
                                    ? QString()
-                                   : QString("Roblox ignores flags not on its allowlist: %1")
+                                   : tr("Roblox ignores flags not on its allowlist: %1")
                                          .arg(ignored.join(QStringLiteral(", ")))
                                          .toHtmlEscaped());
     });
@@ -704,8 +711,8 @@ void SettingsWindow::buildRobloxTab(QVBoxLayout* tab) {
         {"PreferredTransparency", "Background transparency", Kind::Fraction},
     };
 
-    auto* note = new QLabel("The settings from Roblox's in-game menu. Close Roblox before changing them, "
-                            "or it will overwrite them when it exits.", this);
+    auto* note = new QLabel(tr("The settings from Roblox's in-game menu. Close Roblox before changing them, "
+                               "or it will overwrite them when it exits."), this);
     note->setWordWrap(true);
     tab->addWidget(note);
     auto* grid = new QGridLayout();
@@ -732,7 +739,7 @@ void SettingsWindow::buildRobloxTab(QVBoxLayout* tab) {
             slider->setRange(0, 100);
             auto* value = new QLabel(this);
             connect(slider, &QSlider::valueChanged, value,
-                    [value](int v) { value->setText(QStringLiteral("%1%").arg(v)); });
+                    [value](int v) { value->setText(tr("%1%").arg(v)); });
             c.widget = slider;
             c.set = [slider](const QString& v) { slider->setValue(qRound(v.toDouble() * 100)); };
             c.get = [slider] { return QString::number(slider->value() / 100.0); };
@@ -758,9 +765,9 @@ void SettingsWindow::buildRobloxTab(QVBoxLayout* tab) {
     status->setWordWrap(true);
     tab->addWidget(status);
     auto* buttons = new QHBoxLayout();
-    auto* save = new QPushButton("Save to Roblox", this);
+    auto* save = new QPushButton(tr("Save to Roblox"), this);
     save->setIcon(mono_icon("document-save", QStyle::SP_DialogSaveButton));
-    auto* reload = new QPushButton("Reload", this);
+    auto* reload = new QPushButton(tr("Reload"), this);
     reload->setIcon(mono_icon("view-refresh", QStyle::SP_BrowserReload));
     buttons->addWidget(save);
     buttons->addWidget(reload);
@@ -780,7 +787,7 @@ void SettingsWindow::buildRobloxTab(QVBoxLayout* tab) {
             if (value) c.set(value->second);
         }
         save->setEnabled(found);
-        status->setText(found ? QString() : QStringLiteral("Roblox has not saved its settings yet: start it once."));
+        status->setText(found ? QString() : tr("Roblox has not saved its settings yet: start it once."));
     };
     load();
     connect(reload, &QPushButton::clicked, this, load);
@@ -788,7 +795,7 @@ void SettingsWindow::buildRobloxTab(QVBoxLayout* tab) {
         const QString path = roblox_settings::player_file();
         QFile in(path);
         if (path.isEmpty() || !in.open(QIODevice::ReadOnly)) {
-            status->setText(QStringLiteral("Roblox's settings file is gone."));
+            status->setText(tr("Roblox's settings file is gone."));
             return;
         }
         QString xml = QString::fromUtf8(in.readAll());
@@ -798,21 +805,21 @@ void SettingsWindow::buildRobloxTab(QVBoxLayout* tab) {
         }
         QSaveFile out(path);
         const bool saved = out.open(QIODevice::WriteOnly) && out.write(xml.toUtf8()) >= 0 && out.commit();
-        status->setText(saved ? QStringLiteral("Saved. Roblox uses them the next time it starts.")
-                              : QStringLiteral("%1 could not be written.").arg(path));
+        status->setText(saved ? tr("Saved. Roblox uses them the next time it starts.")
+                              : tr("%1 could not be written.").arg(path));
     });
 }
 
 void SettingsWindow::buildStudioTab(QVBoxLayout* tab) {
-    tab->addWidget(new QLabel("<b>FastFlags</b>", this));
+    tab->addWidget(new QLabel(tr("<b>FastFlags</b>"), this));
     auto* note = new QLabel(
-        "Studio's own, separate from the Player's: a JSON object, written into Studio's "
-        "ClientAppSettings.json each time it starts.", this);
+        tr("Studio's own, separate from the Player's: a JSON object, written into Studio's "
+           "ClientAppSettings.json each time it starts."), this);
     note->setWordWrap(true);
     tab->addWidget(note);
     auto* editor = new QPlainTextEdit(this);
     editor->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-    editor->setPlaceholderText(QStringLiteral("{\n    \"FFlagExample\": true\n}"));
+    editor->setPlaceholderText(tr("{\n    \"FFlagExample\": true\n}"));
     const QString path = QString::fromStdString(stud::config::default_studio_flags_path());
     {
         QFile file(path);
@@ -820,7 +827,7 @@ void SettingsWindow::buildStudioTab(QVBoxLayout* tab) {
     }
     tab->addWidget(editor, 1);
     auto* row = new QHBoxLayout();
-    auto* save = new QPushButton("Save Studio's flags", this);
+    auto* save = new QPushButton(tr("Save Studio's flags"), this);
     save->setIcon(mono_icon("document-save", QStyle::SP_DialogSaveButton));
     auto* status = new QLabel(this);
     status->setWordWrap(true);
@@ -831,28 +838,28 @@ void SettingsWindow::buildStudioTab(QVBoxLayout* tab) {
         const QByteArray text = editor->toPlainText().toUtf8();
         QString error;
         if (!parse_flags(QString::fromUtf8(text), &error)) {
-            status->setText(QStringLiteral("Not saved: %1.").arg(error));
+            status->setText(tr("Not saved: %1.").arg(error));
             return;
         }
         QDir().mkpath(QFileInfo(path).absolutePath());
         QSaveFile out(path);
         if (!out.open(QIODevice::WriteOnly) || out.write(text) < 0 || !out.commit()) {
-            status->setText(QStringLiteral("Not saved: %1 could not be written.").arg(path));
+            status->setText(tr("Not saved: %1 could not be written.").arg(path));
             return;
         }
-        status->setText(QStringLiteral("Saved. Studio uses them the next time it starts."));
+        status->setText(tr("Saved. Studio uses them the next time it starts."));
     });
 
     tab->addSpacing(fontMetrics().height());
-    tab->addWidget(new QLabel("<b>Folders</b>", this));
+    tab->addWidget(new QLabel(tr("<b>Folders</b>"), this));
     auto* folders = new QHBoxLayout();
-    auto* plugins = new QPushButton("Open the Plugins folder", this);
+    auto* plugins = new QPushButton(tr("Open the Plugins folder"), this);
     plugins->setIcon(mono_icon("folder-open", QStyle::SP_DirOpenIcon));
-    plugins->setToolTip("Where Studio loads local plugins from, such as Rojo's: Documents/Roblox/Plugins "
-                        "inside Stud's macOS environment.");
-    auto* documents = new QPushButton("Open Documents", this);
+    plugins->setToolTip(tr("Where Studio loads local plugins from, such as Rojo's: Documents/Roblox/Plugins "
+                           "inside Stud's macOS environment."));
+    auto* documents = new QPushButton(tr("Open Documents"), this);
     documents->setIcon(mono_icon("folder-documents", QStyle::SP_DirOpenIcon));
-    documents->setToolTip("Studio's Documents folder inside Stud's macOS environment.");
+    documents->setToolTip(tr("Studio's Documents folder inside Stud's macOS environment."));
     folders->addWidget(plugins);
     folders->addWidget(documents);
     folders->addStretch();
@@ -861,7 +868,7 @@ void SettingsWindow::buildStudioTab(QVBoxLayout* tab) {
         const QString home = client::prefix_home();
         if (home.isEmpty()) {
             QMessageBox::information(this, QStringLiteral("Stud"),
-                                     QStringLiteral("Start Roblox or Studio once first: the folder is made then."));
+                                     tr("Start Roblox or Studio once first: the folder is made then."));
             return;
         }
         const QString dir = home + QLatin1Char('/') + relative;
@@ -873,25 +880,25 @@ void SettingsWindow::buildStudioTab(QVBoxLayout* tab) {
 }
 
 void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
-    auto* logsLabel = new QLabel("<b>Logs</b>", this);
+    auto* logsLabel = new QLabel(tr("<b>Logs</b>"), this);
     tab->addWidget(logsLabel);
-    auto* logsNote = new QLabel("For a bug report: every session's log and Roblox's own, or only the "
-                                "newest session's.", this);
+    auto* logsNote = new QLabel(tr("For a bug report: every session's log and Roblox's own, or only the "
+                                   "newest session's."), this);
     logsNote->setWordWrap(true);
     tab->addWidget(logsNote);
     auto* logs = new QHBoxLayout();
-    auto* exportAll = new QPushButton("Export logs", this);
+    auto* exportAll = new QPushButton(tr("Export logs"), this);
     exportAll->setIcon(mono_icon("document-export", QStyle::SP_DialogSaveButton));
-    exportAll->setToolTip("Every session log, and Roblox's own logs from the same days, as one .tar.gz.");
-    auto* exportLatest = new QPushButton("Export the latest log", this);
+    exportAll->setToolTip(tr("Every session log, and Roblox's own logs from the same days, as one .tar.gz."));
+    auto* exportLatest = new QPushButton(tr("Export the latest log"), this);
     exportLatest->setIcon(mono_icon("text-x-generic", QStyle::SP_FileIcon));
-    exportLatest->setToolTip("Only the newest session's log, as a .log file.");
-    auto* openLogs = new QPushButton("Open the logs folder", this);
+    exportLatest->setToolTip(tr("Only the newest session's log, as a .log file."));
+    auto* openLogs = new QPushButton(tr("Open the logs folder"), this);
     openLogs->setIcon(mono_icon("folder-open", QStyle::SP_DirOpenIcon));
-    auto* copyInfo = new QPushButton("Copy system info", this);
+    auto* copyInfo = new QPushButton(tr("Copy system info"), this);
     copyInfo->setIcon(mono_icon("edit-copy", QStyle::SP_FileDialogDetailedView));
-    copyInfo->setToolTip("Stud's and Rosemary's versions, the system, GPU and settings: the top of every "
-                         "session log, ready to paste into a report. Nothing secret is in it.");
+    copyInfo->setToolTip(tr("Stud's and Rosemary's versions, the system, GPU and settings: the top of every "
+                            "session log, ready to paste into a report. Nothing secret is in it."));
     logs->addWidget(exportAll);
     logs->addWidget(exportLatest);
     logs->addStretch();
@@ -903,32 +910,32 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
     tab->addLayout(logs2);
 
     tab->addSpacing(fontMetrics().height());
-    tab->addWidget(new QLabel("<b>Storage</b>", this));
-    auto* storageNote = new QLabel("Settings, FastFlags, customizations and logs will not be erased.", this);
+    tab->addWidget(new QLabel(tr("<b>Storage</b>"), this));
+    auto* storageNote = new QLabel(tr("Settings, FastFlags, customizations and logs will not be erased."), this);
     storageNote->setWordWrap(true);
     tab->addWidget(storageNote);
     auto* storage = new QHBoxLayout();
     auto* clearCache = new QPushButton(this);
     clearCache->setIcon(mono_icon("edit-clear", QStyle::SP_DialogResetButton));
-    clearCache->setToolTip("The web pages' cache. Nothing in it is needed; it fills up again as pages load.");
+    clearCache->setToolTip(tr("The web pages' cache. Nothing in it is needed; it fills up again as pages load."));
     auto* clearData = new QPushButton(this);
     clearData->setIcon(mono_icon("edit-delete", QStyle::SP_TrashIcon));
-    clearData->setToolTip("The Roblox client and Studio, the macOS environment, your Roblox login and your "
-                          "game history. The next launch downloads and sets up everything again.");
+    clearData->setToolTip(tr("The Roblox client and Studio, the macOS environment, your Roblox login and your "
+                             "game history. The next launch downloads and sets up everything again."));
     storage->addWidget(clearCache);
     storage->addWidget(clearData);
     storage->addStretch();
     tab->addLayout(storage);
     auto* repair = new QHBoxLayout();
-    auto* repairRoblox = new QPushButton("Repair Roblox", this);
+    auto* repairRoblox = new QPushButton(tr("Repair Roblox"), this);
     repairRoblox->setIcon(mono_icon("tools-wizard", QStyle::SP_BrowserReload));
-    repairRoblox->setToolTip("Removes the installed Roblox and Studio, so the next launch downloads them "
-                             "fresh. Your Roblox login and the macOS environment stay.");
-    auto* resetPrefix = new QPushButton("Reset the macOS environment", this);
+    repairRoblox->setToolTip(tr("Removes the installed Roblox and Studio, so the next launch downloads them "
+                                "fresh. Your Roblox login and the macOS environment stay."));
+    auto* resetPrefix = new QPushButton(tr("Reset the macOS environment"), this);
     resetPrefix->setIcon(mono_icon("view-refresh", QStyle::SP_BrowserReload));
-    resetPrefix->setToolTip("Removes the macOS environment Roblox runs in, which the next launch sets up "
-                            "again. Roblox itself stays; your Roblox login and Roblox's own settings go.");
-    auto* openData = new QPushButton("Open the data folder", this);
+    resetPrefix->setToolTip(tr("Removes the macOS environment Roblox runs in, which the next launch sets up "
+                               "again. Roblox itself stays; your Roblox login and Roblox's own settings go."));
+    auto* openData = new QPushButton(tr("Open the data folder"), this);
     openData->setIcon(mono_icon("folder-open", QStyle::SP_DirOpenIcon));
     repair->addWidget(repairRoblox);
     repair->addWidget(resetPrefix);
@@ -937,11 +944,11 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
     tab->addLayout(repair);
 
     tab->addSpacing(fontMetrics().height());
-    tab->addWidget(new QLabel("<b>Settings</b>", this));
-    auto* resetAll = new QPushButton("Reset all settings", this);
+    tab->addWidget(new QLabel(tr("<b>Settings</b>"), this));
+    auto* resetAll = new QPushButton(tr("Reset all settings"), this);
     resetAll->setIcon(mono_icon("edit-undo", QStyle::SP_DialogResetButton));
-    resetAll->setToolTip("Every setting here back to its default, as right-clicking each one does. "
-                         "Nothing changes until you save.");
+    resetAll->setToolTip(tr("Every setting here back to its default, as right-clicking each one does. "
+                            "Nothing changes until you save."));
     tab->addWidget(resetAll, 0, Qt::AlignLeft);
 
     auto* status = new QLabel(this);
@@ -952,8 +959,8 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
     const QString cache = QString::fromStdString(stud::paths::cache_dir());
     const QString data = QString::fromStdString(stud::paths::data_dir());
     const auto label_sizes = [clearCache, clearData, cache, data] {
-        clearCache->setText(QStringLiteral("Clear Stud's cache"));
-        clearData->setText(QStringLiteral("Clear Stud's data"));
+        clearCache->setText(tr("Clear Stud's cache"));
+        clearData->setText(tr("Clear Stud's data"));
         QPointer<QPushButton> cache_button = clearCache;
         QPointer<QPushButton> data_button = clearData;
         std::thread([cache_button, data_button, cache, data] {
@@ -962,10 +969,10 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
             QMetaObject::invokeMethod(qApp, [cache_button, data_button, cache_bytes, data_bytes] {
                 const QLocale here;
                 if (cache_button) {
-                    cache_button->setText(QStringLiteral("Clear Stud's cache (%1)").arg(here.formattedDataSize(cache_bytes)));
+                    cache_button->setText(tr("Clear Stud's cache (%1)").arg(here.formattedDataSize(cache_bytes)));
                 }
                 if (data_button) {
-                    data_button->setText(QStringLiteral("Clear Stud's data (%1)").arg(here.formattedDataSize(data_bytes)));
+                    data_button->setText(tr("Clear Stud's data (%1)").arg(here.formattedDataSize(data_bytes)));
                 }
             });
         }).detach();
@@ -992,46 +999,46 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
     });
     connect(copyInfo, &QPushButton::clicked, this, [status] {
         QGuiApplication::clipboard()->setText(QString::fromStdString(diagnostics_text()));
-        status->setText(QStringLiteral("System info copied."));
+        status->setText(tr("System info copied."));
     });
     connect(resetAll, &QPushButton::clicked, this, [this, status] {
         for (const auto& reset : resets_) reset();
-        status->setText(QStringLiteral("Every setting is back to its default. Save to keep them."));
+        status->setText(tr("Every setting is back to its default. Save to keep them."));
     });
     // Refused while Roblox runs: its client, prefix and web views are in use.
     const auto refuse_while_running = [this] {
         if (!stud_session_is_running()) return false;
         QMessageBox::information(this, QStringLiteral("Stud"),
-                                 QStringLiteral("Close Roblox first: Stud is using these files while it runs."));
+                                 tr("Close Roblox first: Stud is using these files while it runs."));
         return true;
     };
     connect(clearCache, &QPushButton::clicked, this, [status, cache, label_sizes, refuse_while_running] {
         if (refuse_while_running()) return;
         const bool cleared = QDir(cache).removeRecursively();
         label_sizes();
-        status->setText(cleared ? QStringLiteral("Stud's cache is cleared.")
-                                : QStringLiteral("Some of Stud's cache could not be removed."));
+        status->setText(cleared ? tr("Stud's cache is cleared.")
+                                : tr("Some of Stud's cache could not be removed."));
     });
     connect(clearData, &QPushButton::clicked, this, [this, status, data, label_sizes, refuse_while_running] {
         if (refuse_while_running()) return;
         if (QMessageBox::question(
-                this, QStringLiteral("Clear Stud's data"),
-                QStringLiteral("Remove the Roblox client and Studio, the macOS environment, your Roblox login "
-                               "and your game history?\n\nThe next launch downloads and sets up everything "
-                               "again, and you sign in to Roblox again. Settings, FastFlags, customizations "
-                               "and logs are kept.")) != QMessageBox::Yes) {
+                this, tr("Clear Stud's data"),
+                tr("Remove the Roblox client and Studio, the macOS environment, your Roblox login "
+                   "and your game history?\n\nThe next launch downloads and sets up everything "
+                   "again, and you sign in to Roblox again. Settings, FastFlags, customizations "
+                   "and logs are kept.")) != QMessageBox::Yes) {
             return;
         }
         const bool cleared = QDir(data).removeRecursively();
         label_sizes();
-        status->setText(cleared ? QStringLiteral("Stud's data is cleared.")
-                                : QStringLiteral("Some of Stud's data could not be removed."));
+        status->setText(cleared ? tr("Stud's data is cleared.")
+                                : tr("Some of Stud's data could not be removed."));
     });
     connect(repairRoblox, &QPushButton::clicked, this, [this, status, label_sizes, refuse_while_running] {
         if (refuse_while_running()) return;
-        if (QMessageBox::question(this, QStringLiteral("Repair Roblox"),
-                                  QStringLiteral("Remove the installed Roblox and Studio? The next launch "
-                                                 "downloads them again. Your Roblox login stays.")) !=
+        if (QMessageBox::question(this, tr("Repair Roblox"),
+                                  tr("Remove the installed Roblox and Studio? The next launch "
+                                     "downloads them again. Your Roblox login stays.")) !=
             QMessageBox::Yes) {
             return;
         }
@@ -1040,32 +1047,32 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
             cleared = QDir(client::clients_dir(product)).removeRecursively() && cleared;
         }
         label_sizes();
-        status->setText(cleared ? QStringLiteral("Roblox will be downloaded again at the next launch.")
-                                : QStringLiteral("Some of Roblox could not be removed."));
+        status->setText(cleared ? tr("Roblox will be downloaded again at the next launch.")
+                                : tr("Some of Roblox could not be removed."));
     });
     connect(resetPrefix, &QPushButton::clicked, this, [this, status, label_sizes, refuse_while_running] {
         if (refuse_while_running()) return;
         if (QMessageBox::question(
-                this, QStringLiteral("Reset the macOS environment"),
-                QStringLiteral("Remove the macOS environment Roblox runs in? The next launch sets it up "
-                               "again. You sign in to Roblox again, and Roblox's own settings (volume, "
-                               "sensitivity and the like) go back to its defaults.")) != QMessageBox::Yes) {
+                this, tr("Reset the macOS environment"),
+                tr("Remove the macOS environment Roblox runs in? The next launch sets it up "
+                   "again. You sign in to Roblox again, and Roblox's own settings (volume, "
+                   "sensitivity and the like) go back to its defaults.")) != QMessageBox::Yes) {
             return;
         }
         const bool cleared = QDir(client::prefix_dir()).removeRecursively();
         label_sizes();
-        status->setText(cleared ? QStringLiteral("The macOS environment will be set up again at the next launch.")
-                                : QStringLiteral("Some of the macOS environment could not be removed."));
+        status->setText(cleared ? tr("The macOS environment will be set up again at the next launch.")
+                                : tr("Some of the macOS environment could not be removed."));
     });
 }
 
 void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
-    historyGamesCheck_ = new QCheckBox("Track games", this);
-    historyGamesCheck_->setToolTip("Keeps each game you play here, with the time played.");
-    historyServersCheck_ = new QCheckBox("Track servers", this);
+    historyGamesCheck_ = new QCheckBox(tr("Track games"), this);
+    historyGamesCheck_->setToolTip(tr("Keeps each game you play here, with the time played."));
+    historyServersCheck_ = new QCheckBox(tr("Track servers"), this);
     historyServersCheck_->setToolTip(
-        "Keeps each server you join in a game, with where it is, so you can rejoin it.\n"
-        "Finding where a server is asks ipwho.is about the server's address, never yours.");
+        tr("Keeps each server you join in a game, with where it is, so you can rejoin it.\n"
+           "Finding where a server is asks ipwho.is about the server's address, never yours."));
     connect(historyGamesCheck_, &QCheckBox::toggled, historyServersCheck_, &QWidget::setEnabled);
     auto* tracking = new QHBoxLayout();
     tracking->addWidget(historyGamesCheck_);
@@ -1087,14 +1094,14 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
         for (const history::Entry& e : history::load()) {
             played += e.seconds_played;
             auto* item = new QTreeWidgetItem(list);
-            item->setText(0, e.name.isEmpty() ? QStringLiteral("Place %1").arg(e.place) : e.name);
+            item->setText(0, e.name.isEmpty() ? tr("Place %1").arg(e.place) : e.name);
             item->setText(1, history::duration(e.seconds_played));
             item->setText(2, QDateTime::fromSecsSinceEpoch(e.last_played).toString(when));
             item->setData(0, Qt::UserRole, e.place);
             item->setData(0, Qt::UserRole + 1, e.icon);
             for (const history::Server& s : e.servers) {
                 auto* server = new QTreeWidgetItem(item);
-                server->setText(0, s.location.isEmpty() ? QStringLiteral("Server %1").arg(s.job.left(8))
+                server->setText(0, s.location.isEmpty() ? tr("Server %1").arg(s.job.left(8))
                                                         : s.location);
                 server->setToolTip(0, s.job);
                 server->setText(1, history::duration(s.seconds));
@@ -1103,21 +1110,21 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
                 server->setData(0, Qt::UserRole + 2, s.job);
             }
         }
-        total->setText(QStringLiteral("Time played in all: %1").arg(history::duration(played)));
+        total->setText(tr("Time played in all: %1").arg(history::duration(played)));
     };
     refresh();
 
     auto* buttons = new QHBoxLayout();
-    auto* join = new QPushButton("Join", this);
-    auto* shortcut = new QPushButton("Create shortcut", this);
+    auto* join = new QPushButton(tr("Join"), this);
+    auto* shortcut = new QPushButton(tr("Create shortcut"), this);
     join->setIcon(mono_icon("media-playback-start", QStyle::SP_MediaPlay));
     shortcut->setIcon(mono_icon("list-add", QStyle::SP_FileDialogNewFolder));
-    shortcut->setToolTip("Adds the game to the application menu; it opens straight into the game.");
-    auto* reload = new QPushButton("Refresh", this);
+    shortcut->setToolTip(tr("Adds the game to the application menu; it opens straight into the game."));
+    auto* reload = new QPushButton(tr("Refresh"), this);
     reload->setIcon(mono_icon("view-refresh", QStyle::SP_BrowserReload));
-    auto* forget = new QPushButton("Clear history", this);
+    auto* forget = new QPushButton(tr("Clear history"), this);
     forget->setIcon(mono_icon("edit-clear-history", QStyle::SP_DialogDiscardButton));
-    forget->setToolTip("Forgets every game and server here, and the time played.");
+    forget->setToolTip(tr("Forgets every game and server here, and the time played."));
     buttons->addWidget(join);
     buttons->addWidget(shortcut);
     buttons->addStretch();
@@ -1126,8 +1133,8 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
     tab->addLayout(buttons);
     connect(reload, &QPushButton::clicked, this, refresh);
     connect(forget, &QPushButton::clicked, this, [this, refresh] {
-        if (QMessageBox::question(this, QStringLiteral("Clear history"),
-                                  QStringLiteral("Forget every game and server, and the time played?")) !=
+        if (QMessageBox::question(this, tr("Clear history"),
+                                  tr("Forget every game and server, and the time played?")) !=
             QMessageBox::Yes) {
             return;
         }
@@ -1137,7 +1144,7 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
     const auto update_join = [list, join] {
         const QTreeWidgetItem* item = list->currentItem();
         const bool server = item != nullptr && item->parent() != nullptr;
-        join->setText(server ? QStringLiteral("Rejoin server") : QStringLiteral("Join"));
+        join->setText(server ? tr("Rejoin server") : tr("Join"));
     };
     connect(list, &QTreeWidget::currentItemChanged, this, update_join);
     connect(join, &QPushButton::clicked, this, [list] {
@@ -1169,8 +1176,8 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
                     QStringLiteral("stud \"roblox://experiences/start?placeId=%1\"").arg(place), png,
                     [status](bool added, const QString& what) {
                         if (status.isNull() || (!added && what.isEmpty())) return;
-                        status->setText((added ? QStringLiteral("Added %1 to the application menu.").arg(what)
-                                               : QStringLiteral("Could not add the shortcut: %1").arg(what))
+                        status->setText((added ? tr("Added %1 to the application menu.").arg(what)
+                                               : tr("Could not add the shortcut: %1").arg(what))
                                             .toHtmlEscaped());
                     });
             };
@@ -1200,7 +1207,7 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
         clean_name.replace(QLatin1Char('\n'), QLatin1Char(' '));
         QFile file(entry);
         if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            statusLabel_->setText(QStringLiteral("Could not write %1.").arg(entry).toHtmlEscaped());
+            statusLabel_->setText(tr("Could not write %1.").arg(entry).toHtmlEscaped());
             return;
         }
         file.write(QStringLiteral("[Desktop Entry]\nType=Application\nName=%1\nComment=Play %1 with Stud\n"
@@ -1209,7 +1216,7 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
                        .arg(clean_name, desktop_exec_quote(launcher_command()), place, icon)
                        .toUtf8());
         file.close();
-        statusLabel_->setText(QStringLiteral("Added %1 to the application menu.").arg(clean_name).toHtmlEscaped());
+        statusLabel_->setText(tr("Added %1 to the application menu.").arg(clean_name).toHtmlEscaped());
         if (!icon_url.isEmpty() && !QFileInfo::exists(icon)) {
             auto* net = new QNetworkAccessManager(this);
             QNetworkReply* reply = net->get(QNetworkRequest(QUrl(icon_url)));
@@ -1228,11 +1235,11 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
 // Imports another bootstrapper's Modifications and FastFlags.
 void SettingsWindow::onImportBootstrapperClicked() {
     const QString dir = QFileDialog::getExistingDirectory(
-        this, "Choose the Bloxstrap, Fishstrap or Froststrap folder");
+        this, tr("Choose the Bloxstrap, Fishstrap or Froststrap folder"));
     if (dir.isEmpty()) return;
     const QString source = dir + QStringLiteral("/Modifications");
     if (!QDir(source).exists()) {
-        statusLabel_->setText(QStringLiteral("That folder has no Modifications folder."));
+        statusLabel_->setText(tr("That folder has no Modifications folder."));
         return;
     }
     int copied = 0;
@@ -1258,34 +1265,34 @@ void SettingsWindow::onImportBootstrapperClicked() {
             flags = int(imported->size());
         }
     }
-    statusLabel_->setText(QStringLiteral("Imported %1 customization file(s) and %2 flag(s). Save to keep the flags.")
+    statusLabel_->setText(tr("Imported %1 customization file(s) and %2 flag(s). Save to keep the flags.")
                               .arg(copied)
                               .arg(flags));
 }
 
 void SettingsWindow::onImportFlagsClicked() {
-    const QString path = QFileDialog::getOpenFileName(this, "Import FFlags", QString(),
-                                                      "JSON files (*.json);;All files (*)");
+    const QString path = QFileDialog::getOpenFileName(this, tr("Import FFlags"), QString(),
+                                                      tr("JSON files (*.json);;All files (*)"));
     if (path.isEmpty()) return;
     QFile file(path);
     QString error;
     if (!file.open(QIODevice::ReadOnly)) {
-        statusLabel_->setText(QString("Could not read %1.").arg(path).toHtmlEscaped());
+        statusLabel_->setText(tr("Could not read %1.").arg(path).toHtmlEscaped());
         return;
     }
     const auto imported = parse_flags(QString::fromUtf8(file.readAll()), &error);
     if (!imported) {
-        statusLabel_->setText(QString("%1 is not usable: %2").arg(path, error).toHtmlEscaped());
+        statusLabel_->setText(tr("%1 is not usable: %2").arg(path, error).toHtmlEscaped());
         return;
     }
     const auto current = parse_flags(flagsEdit_->toPlainText(), &error);
     if (!current) {
         statusLabel_->setText(
-            QString("Fix the flags above before importing: %1").arg(error).toHtmlEscaped());
+            tr("Fix the flags above before importing: %1").arg(error).toHtmlEscaped());
         return;
     }
     flagsEdit_->setPlainText(format_flags(merged_flags(*current, *imported)));
-    statusLabel_->setText(QString("Imported %1 flag(s). Save to keep them.").arg(imported->size()));
+    statusLabel_->setText(tr("Imported %1 flag(s). Save to keep them.").arg(imported->size()));
 }
 
 void SettingsWindow::loadFromDisk() {
@@ -1298,7 +1305,7 @@ void SettingsWindow::loadFromDisk() {
     try {
         settings = stud::config::load_settings(stud::config::default_config_path());
     } catch (const stud::config::SettingsError& e) {
-        statusLabel_->setText(QString("Failed to load settings: %1").arg(e.what()));
+        statusLabel_->setText(tr("Failed to load settings: %1").arg(e.what()));
         return;
     }
 
@@ -1427,14 +1434,14 @@ void SettingsWindow::showIdleStatus() {
         "<a href=\"%1\" style=\"color:#2f7fd6; text-decoration:underline;\">%2</a>");
     QStringList lines;
     if (UpdateCheck::updateAvailable()) {
-        lines << link.arg(UpdateCheck::releasesUrl(), QStringLiteral("Your Stud version is outdated!"));
+        lines << link.arg(UpdateCheck::releasesUrl(), tr("Your Stud version is outdated!"));
     }
     statusLabel_->setText(lines.join(QStringLiteral("<br>")));
 }
 
 void SettingsWindow::paintRestartIcon() {
     restartButton_->setIcon(mono_icon("view-refresh", QStyle::SP_BrowserReload));
-    if (restartButton_->icon().isNull()) restartButton_->setText(QStringLiteral("Restart"));
+    if (restartButton_->icon().isNull()) restartButton_->setText(tr("Restart"));
 }
 
 // Save, stop the session and start it again. Settings are read at session start.
@@ -1442,10 +1449,10 @@ void SettingsWindow::onRestartClicked() {
     // Save first; a failed save doesn't restart with the old settings.
     if (!onSaveClicked()) return;
     if (!stud_session_is_running()) {
-        statusLabel_->setText("Settings saved.");
+        statusLabel_->setText(tr("Settings saved."));
         return;
     }
-    statusLabel_->setText("Restarting Stud...");
+    statusLabel_->setText(tr("Restarting Stud..."));
     // Let the label paint before stopping the session blocks this thread.
     QApplication::processEvents();
     terminate_stud_session();
@@ -1457,7 +1464,7 @@ bool SettingsWindow::onSaveClicked() {
     QString flags_error;
     const auto flags = parse_flags(flagsEdit_->toPlainText(), &flags_error);
     if (!flags) {
-        statusLabel_->setText(QString("Nothing was saved. The FFlags are not valid JSON: %1")
+        statusLabel_->setText(tr("Nothing was saved. The FFlags are not valid JSON: %1")
                                   .arg(flags_error)
                                   .toHtmlEscaped());
         return false;
@@ -1468,7 +1475,7 @@ bool SettingsWindow::onSaveClicked() {
         settings = stud::config::load_settings(stud::config::default_config_path());
     } catch (const stud::config::SettingsError& e) {
         statusLabel_->setText(
-            QString("Nothing was saved. Fix or delete the settings file first: %1")
+            tr("Nothing was saved. Fix or delete the settings file first: %1")
                 .arg(QString::fromUtf8(e.what()).toHtmlEscaped()));
         return false;
     }
@@ -1508,7 +1515,7 @@ bool SettingsWindow::onSaveClicked() {
     const QByteArray flags_text = format_flags(*flags).toUtf8();
     if (!flags_file.open(QIODevice::WriteOnly) || flags_file.write(flags_text) != flags_text.size() ||
         !flags_file.commit()) {
-        statusLabel_->setText(QString("Could not write %1.").arg(flags_path()).toHtmlEscaped());
+        statusLabel_->setText(tr("Could not write %1.").arg(flags_path()).toHtmlEscaped());
         return false;
     }
     flagsEdit_->setPlainText(QString::fromUtf8(flags_text));
@@ -1519,7 +1526,7 @@ bool SettingsWindow::onSaveClicked() {
                                   : "Settings saved.");
         return true;
     } catch (const stud::config::SettingsError& e) {
-        statusLabel_->setText(QString("Failed to save settings: %1").arg(e.what()));
+        statusLabel_->setText(tr("Failed to save settings: %1").arg(e.what()));
         return false;
     }
 }
