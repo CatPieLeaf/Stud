@@ -8,6 +8,7 @@ pkgbase = stud-bin
 	makedepends = cmake
 	makedepends = ninja
 	makedepends = git
+	makedepends = qt6-tools
 	depends = gamemode
 	depends = qt6-base
 	depends = wpewebkit
