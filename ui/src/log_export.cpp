@@ -36,7 +36,7 @@ QString in_downloads(const QString& name) {
 bool nothing_to_export(QWidget* parent, const QStringList& files) {
     if (!files.isEmpty()) return false;
     QMessageBox::information(parent, QStringLiteral("Stud"),
-                             QCoreApplication::translate("LogExport", "There are no logs to export yet."));
+                             QCoreApplication::translate("stud::ui::LogExport", "There are no logs to export yet."));
     return true;
 }
 
@@ -62,8 +62,8 @@ QString export_all_logs(QWidget* parent) {
     const QString name = QStringLiteral("stud-logs-%1.tar.gz")
                              .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss")));
     QString target = QFileDialog::getSaveFileName(
-        parent, QCoreApplication::translate("LogExport", "Export Stud's logs"), in_downloads(name),
-        QCoreApplication::translate("LogExport", "Archives (*.tar.gz);;All files (*)"));
+        parent, QCoreApplication::translate("stud::ui::LogExport", "Export Stud's logs"), in_downloads(name),
+        QCoreApplication::translate("stud::ui::LogExport", "Archives (*.tar.gz);;All files (*)"));
     if (target.isEmpty()) return {};
     // A bare name typed in the dialog means the archive, not a file with no type.
     if (!target.endsWith(QStringLiteral(".tar.gz")) && !target.endsWith(QStringLiteral(".tgz"))) {
@@ -73,7 +73,7 @@ QString export_all_logs(QWidget* parent) {
     if (!write_log_tarball(target, files, &error, client_logs)) {
         QMessageBox::warning(
             parent, QStringLiteral("Stud"),
-            QCoreApplication::translate("LogExport", "Could not export the logs: %1").arg(error));
+            QCoreApplication::translate("stud::ui::LogExport", "Could not export the logs: %1").arg(error));
         return {};
     }
     return QStringLiteral("%1 log%2 saved to %3")
@@ -86,18 +86,18 @@ QString export_latest_log(QWidget* parent) {
     if (nothing_to_export(parent, files)) return {};
     const QString latest = files.first();
     QString target = QFileDialog::getSaveFileName(
-        parent, QCoreApplication::translate("LogExport", "Export the latest log"),
+        parent, QCoreApplication::translate("stud::ui::LogExport", "Export the latest log"),
         in_downloads(QFileInfo(latest).fileName()),
-        QCoreApplication::translate("LogExport", "Log files (*.log);;All files (*)"));
+        QCoreApplication::translate("stud::ui::LogExport", "Log files (*.log);;All files (*)"));
     if (target.isEmpty()) return {};
     if (!target.endsWith(QStringLiteral(".log"))) target += QStringLiteral(".log");
     QFile::remove(target);
     if (!QFile::copy(latest, target)) {
         QMessageBox::warning(parent, QStringLiteral("Stud"),
-                             QCoreApplication::translate("LogExport", "Could not write %1.").arg(target));
+                             QCoreApplication::translate("stud::ui::LogExport", "Could not write %1.").arg(target));
         return {};
     }
-    return QCoreApplication::translate("LogExport", "The latest log saved to %1").arg(target);
+    return QCoreApplication::translate("stud::ui::LogExport", "The latest log saved to %1").arg(target);
 }
 
 }  // namespace stud::ui

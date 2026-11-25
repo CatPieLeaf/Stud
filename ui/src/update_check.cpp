@@ -66,7 +66,7 @@ QNetworkRequest release_request(const QString& url) {
 void fail_update(const QString& why) {
     g_updating = false;
     std::fprintf(stderr, "stud: self-update failed: %s\n", qPrintable(why));
-    send_notification(QCoreApplication::translate("UpdateCheck", "Stud could not update"), why);
+    send_notification(QCoreApplication::translate("stud::ui::UpdateCheck", "Stud could not update"), why);
 }
 
 // Downloads beside the running AppImage and renames it over once the SHA-1 matches.
@@ -85,7 +85,7 @@ void update_appimage(const QString& target) {
         }
         if (sums->error() != QNetworkReply::NoError || sha1.isEmpty()) {
             manager->deleteLater();
-            fail_update(QCoreApplication::translate("UpdateCheck", "The release's checksum could not be read."));
+            fail_update(QCoreApplication::translate("stud::ui::UpdateCheck", "The release's checksum could not be read."));
             return;
         }
         const QString partial = target + QStringLiteral(".download");
@@ -100,11 +100,11 @@ void update_appimage(const QString& target) {
         if (!download->out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
             manager->deleteLater();
             fail_update(
-                QCoreApplication::translate("UpdateCheck", "%1 is not writable.").arg(QFileInfo(target).absolutePath()));
+                QCoreApplication::translate("stud::ui::UpdateCheck", "%1 is not writable.").arg(QFileInfo(target).absolutePath()));
             return;
         }
-        send_notification(QCoreApplication::translate("UpdateCheck", "Updating Stud"),
-                          QCoreApplication::translate("UpdateCheck", "Downloading Stud %1.")
+        send_notification(QCoreApplication::translate("stud::ui::UpdateCheck", "Updating Stud"),
+                          QCoreApplication::translate("stud::ui::UpdateCheck", "Downloading Stud %1.")
                               .arg(UpdateCheck::latestVersion()));
         const auto take = [download](const QByteArray& chunk) {
             if (download->out.write(chunk) != chunk.size()) download->write_failed = true;
@@ -124,8 +124,8 @@ void update_appimage(const QString& target) {
             if (!written || got != sha1) {
                 QFile::remove(partial);
                 fail_update(written
-                                ? QCoreApplication::translate("UpdateCheck", "The download did not match the release.")
-                                : QCoreApplication::translate("UpdateCheck", "The download did not finish."));
+                                ? QCoreApplication::translate("stud::ui::UpdateCheck", "The download did not match the release.")
+                                : QCoreApplication::translate("stud::ui::UpdateCheck", "The download did not finish."));
                 return;
             }
             ::chmod(QFile::encodeName(partial).constData(), 0755);
@@ -134,14 +134,14 @@ void update_appimage(const QString& target) {
                             QFile::encodeName(target).constData()) != 0) {
                 QFile::remove(partial);
                 fail_update(
-                    QCoreApplication::translate("UpdateCheck", "The new AppImage could not replace %1.")
+                    QCoreApplication::translate("stud::ui::UpdateCheck", "The new AppImage could not replace %1.")
                         .arg(target));
                 return;
             }
             g_updating = false;
             std::printf("stud: updated the AppImage to %s\n", qPrintable(UpdateCheck::latestVersion()));
-            send_notification(QCoreApplication::translate("UpdateCheck", "Stud updated"),
-                              QCoreApplication::translate("UpdateCheck", "Restart Stud to use version %1.")
+            send_notification(QCoreApplication::translate("stud::ui::UpdateCheck", "Stud updated"),
+                              QCoreApplication::translate("stud::ui::UpdateCheck", "Restart Stud to use version %1.")
                                   .arg(UpdateCheck::latestVersion()));
         });
     });

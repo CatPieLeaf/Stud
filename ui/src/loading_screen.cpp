@@ -79,7 +79,7 @@ void raise() {
         s.bar->setRange(0, 0);
         s.bar->setTextVisible(false);
         layout->addWidget(s.bar);
-        s.cancel = new QPushButton(QCoreApplication::translate("LoadingScreen", "Cancel"), s.window.get());
+        s.cancel = new QPushButton(QCoreApplication::translate("stud::ui::LoadingScreen", "Cancel"), s.window.get());
         s.cancel->hide();
         QObject::connect(s.cancel, &QPushButton::clicked, s.window.get(), []() {
             Screen& screen_ = screen();
