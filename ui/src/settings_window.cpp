@@ -173,6 +173,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     general->addWidget(new QLabel(tr("Language"), this));
     languageCombo_ = new QComboBox(this);
     languageCombo_->addItem(tr("System language"), QStringLiteral("system"));
+    languageCombo_->addItem(QStringLiteral("English"), QStringLiteral("en"));
     for (const QString& code : translation::languages()) {
         languageCombo_->addItem(translation::language_name(code), code);
     }
