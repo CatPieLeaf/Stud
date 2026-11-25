@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QSaveFile>
 
+#include <algorithm>
 #include <cmath>
 #include <initializer_list>
 
@@ -147,6 +148,20 @@ StudSettings load_settings(const std::string& path) {
     // Older builds wrote "auto", which meant Wayland.
     if (at("displayBackend") == QJsonValue(QStringLiteral("auto"))) doc.insert(QStringLiteral("displayBackend"), QStringLiteral("wayland"));
     read_string("displayBackend", result.display_backend, {"wayland", "x11"});
+
+    // Any locale a catalogue may be for; one that isn't installed stays English.
+    std::string language;
+    if (read_text("language", language)) {
+        const bool shaped = !language.empty() &&
+                            std::all_of(language.begin(), language.end(), [](char c) {
+                                return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                                       (c >= '0' && c <= '9') || c == '_' || c == '-';
+                            });
+        if (!shaped) {
+            throw SettingsError("stud: config '" + path + "' has an invalid \"language\"");
+        }
+        result.language = language;
+    }
     int fps = 0;
     if (read_int("backgroundFps", fps, "an integer")) {
         // 0 or anything past the range (older builds wrote 241) means no limit.
@@ -200,6 +215,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc.insert(QStringLiteral("titleBar"), text(settings.title_bar));
     doc.insert(QStringLiteral("notifications"), text(settings.notifications));
     doc.insert(QStringLiteral("displayBackend"), text(settings.display_backend));
+    doc.insert(QStringLiteral("language"), text(settings.language));
     doc.insert(QStringLiteral("backgroundFps"), settings.background_fps);
     doc.insert(QStringLiteral("mangohud"), settings.mangohud);
     doc.insert(QStringLiteral("launchWrapper"), text(settings.launch_wrapper));

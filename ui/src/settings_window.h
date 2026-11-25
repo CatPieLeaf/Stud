@@ -69,6 +69,7 @@ private:
     QComboBox* titleBarCombo_;
     QComboBox* notificationsCombo_;
     QComboBox* displayBackendCombo_;
+    QComboBox* languageCombo_;
     QCheckBox* gamemodeCheck_;
     QCheckBox* mangohudCheck_;
     QLineEdit* wrapperEdit_;

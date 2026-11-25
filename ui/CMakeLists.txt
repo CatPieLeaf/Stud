@@ -72,6 +72,7 @@ target_compile_definitions(stud_ui_mac_client PRIVATE STUD_VERSION="${STUD_VERSI
 
 add_executable(stud-ui
     src/main.cpp
+    src/translations.cpp
     src/desktop_entry.cpp
     src/diagnose.cpp
     src/discord_rpc.cpp
@@ -126,12 +127,25 @@ install(PROGRAMS "$<TARGET_FILE:stud-ui>"
 # lupdate reads src/ into this template; Weblate starts each language from it.
 # Optional, so a distro without the Linguist tools still builds, in English.
 find_package(Qt6 QUIET COMPONENTS LinguistTools)
+file(GLOB stud_ui_catalogues CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/i18n/stud_*.ts")
 if(Qt6LinguistTools_FOUND)
     file(GLOB_RECURSE stud_ui_source_catalogue CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h")
     qt_add_lupdate(stud-ui
-        TS_FILES "${CMAKE_CURRENT_SOURCE_DIR}/i18n/stud.ts"
+        TS_FILES "${CMAKE_CURRENT_SOURCE_DIR}/i18n/stud.ts" ${stud_ui_catalogues}
         SOURCES ${stud_ui_source_catalogue}
         OPTIONS -no-obsolete -locations none -source-language en)
+
+    # Every catalogue Weblate adds, compiled in, so no package installs them.
+    if(stud_ui_catalogues)
+        qt_add_lrelease(stud-ui TS_FILES ${stud_ui_catalogues} QM_FILES_OUTPUT_VARIABLE stud_ui_qm_files)
+        qt_add_resources(stud-ui "catalogues"
+            PREFIX "/i18n"
+            BASE "${CMAKE_CURRENT_BINARY_DIR}"
+            FILES ${stud_ui_qm_files})
+    endif()
+elseif(stud_ui_catalogues)
+    message(WARNING "ui/i18n has catalogues but Qt's Linguist tools are missing; the build will be "
+                    "English only")
 endif()

@@ -1,6 +1,7 @@
 #include "project_links.h"
 #include "mono_icon.h"
 #include "settings_window.h"
+#include "translations.h"
 
 #include "update_check.h"
 
@@ -169,6 +170,14 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
 
     // ---- General -------------------------------------------------------
     auto* general = add_tab(tr("General"));
+    general->addWidget(new QLabel(tr("Language"), this));
+    languageCombo_ = new QComboBox(this);
+    languageCombo_->addItem(tr("System language"), QStringLiteral("system"));
+    languageCombo_->addItem(QStringLiteral("English"), QStringLiteral("en"));
+    for (const QString& code : translation::languages()) {
+        languageCombo_->addItem(translation::language_name(code), code);
+    }
+    general->addWidget(languageCombo_);
     trayCheck_ = new QCheckBox(tr("Show in system tray"), this);
     general->addWidget(trayCheck_);
     playerDirectlyCheck_ = new QCheckBox(tr("Open Roblox Player directly, without the welcome page"), this);
@@ -466,6 +475,7 @@ void SettingsWindow::installResets() {
     add(titleBarCombo_, [this, d] { select_data(titleBarCombo_, d.title_bar); });
     add(notificationsCombo_, [this, d] { select_data(notificationsCombo_, d.notifications); });
     add(displayBackendCombo_, [this, d] { select_data(displayBackendCombo_, d.display_backend); });
+    add(languageCombo_, [this, d] { select_data(languageCombo_, d.language); });
     add(gamemodeCheck_, [this, d] { gamemodeCheck_->setChecked(d.gamemode); });
     add(mangohudCheck_, [this, d] { mangohudCheck_->setChecked(d.mangohud); });
     add(wrapperEdit_, [this, d] { wrapperEdit_->setText(QString::fromStdString(d.launch_wrapper)); });
@@ -1321,6 +1331,7 @@ void SettingsWindow::loadFromDisk() {
     select_data(titleBarCombo_, settings.title_bar);
     select_data(notificationsCombo_, settings.notifications);
     select_data(displayBackendCombo_, settings.display_backend);
+    select_data(languageCombo_, settings.language);
     mangohudCheck_->setChecked(settings.mangohud);
     wrapperEdit_->setText(QString::fromStdString(settings.launch_wrapper));
     environmentEdit_->setPlainText(QString::fromStdString(settings.environment));
@@ -1479,6 +1490,7 @@ bool SettingsWindow::onSaveClicked() {
                 .arg(QString::fromUtf8(e.what()).toHtmlEscaped()));
         return false;
     }
+    const std::string language_before = settings.language;
     // The "No GPUs found" placeholder carries no data and is never saved as a GPU.
     if (gpuCombo_->currentData().isValid()) {
         settings.gpu.device_index = static_cast<uint32_t>(gpuCombo_->currentData().toUInt());
@@ -1492,6 +1504,7 @@ bool SettingsWindow::onSaveClicked() {
     settings.title_bar = selected_data(titleBarCombo_);
     settings.notifications = selected_data(notificationsCombo_);
     settings.display_backend = selected_data(displayBackendCombo_);
+    settings.language = selected_data(languageCombo_);
     settings.mangohud = mangohudCheck_->isChecked();
     settings.launch_wrapper = wrapperEdit_->text().trimmed().toStdString();
     settings.environment = environmentEdit_->toPlainText().toStdString();
@@ -1521,9 +1534,13 @@ bool SettingsWindow::onSaveClicked() {
     flagsEdit_->setPlainText(QString::fromUtf8(flags_text));
     try {
         stud::config::save_settings(stud::config::default_config_path(), settings);
-        statusLabel_->setText(stud_session_is_running()
-                                  ? "Settings saved. They apply the next time Roblox starts."
-                                  : "Settings saved.");
+        if (settings.language != language_before) {
+            statusLabel_->setText(tr("Language saved. Restart Stud to apply it."));
+        } else {
+            statusLabel_->setText(stud_session_is_running()
+                                      ? tr("Settings saved. They apply the next time Roblox starts.")
+                                      : tr("Settings saved."));
+        }
         return true;
     } catch (const stud::config::SettingsError& e) {
         statusLabel_->setText(tr("Failed to save settings: %1").arg(e.what()));

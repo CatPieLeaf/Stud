@@ -165,6 +165,16 @@ int main(int argc, char** argv) {
         check(stud::config::load_settings(dir + "/auto_backend.json").display_backend == "wayland",
               "an older build's automatic display backend reads as Wayland");
     }
+    {
+        std::ofstream(dir + "/language.json") << R"({"language": "pt_BR"})";
+        const auto chosen = stud::config::load_settings(dir + "/language.json");
+        check(chosen.language == "pt_BR", "a catalogue's locale is read from the config");
+        stud::config::save_settings(dir + "/language_saved.json", chosen);
+        check(stud::config::load_settings(dir + "/language_saved.json").language == "pt_BR",
+              "the chosen language survives a save");
+    }
+    check(throws_on(dir + "/bad_language.json", R"({"language": "../pt"})"),
+          "a language that isn't a locale throws");
     check(throws_on(dir + "/bad_vsync.json", R"({"vsync": "yes"})"), "a non-boolean vsync throws");
     check(throws_on(dir + "/bad_presentation.json", R"({"presentation": "triple"})"),
           "an unknown presentation throws");

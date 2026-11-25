@@ -24,6 +24,7 @@
 #include "login_keyring.h"
 #include "stud/session_log.h"
 #include "stud/settings.h"
+#include "translations.h"
 #include "stud/stud_paths.h"
 
 #include <QApplication>
@@ -1318,6 +1319,15 @@ int main(int argc, char** argv) {
     // Wayland finds the icon through app_id; the client reports the same id.
     QGuiApplication::setDesktopFileName(QStringLiteral(STUD_APP_ID));
     QCoreApplication::setApplicationName(QStringLiteral("Stud"));
+
+    // Before anything draws, so the welcome page and the tray menu are translated too.
+    // A settings file that doesn't load is reported later; English until then.
+    std::string language = "system";
+    try {
+        language = stud::config::load_settings(stud::config::default_config_path()).language;
+    } catch (const stud::config::SettingsError&) {
+    }
+    stud::ui::translation::install(language);
 
     // Remove Stud 1.x's Android engine, APK and caches; its settings, flags,
     // customizations and logs stay.
