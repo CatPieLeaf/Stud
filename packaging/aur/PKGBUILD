@@ -35,6 +35,7 @@ makedepends=(
   'git'
   'rust'
   'shaderc'
+  'qt6-tools'
 )
 optdepends=(
   'mangohud: the performance overlay Stud can switch on in Settings'

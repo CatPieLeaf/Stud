@@ -85,7 +85,7 @@ jobs:
         run: |
           dnf install -y --setopt=install_weak_deps=False --setopt=max_parallel_downloads=10 \
             gcc-c++ cmake ninja-build git pkgconf-pkg-config rpm-build gzip \
-            qt6-qtbase-devel \
+            qt6-qtbase-devel qt6-qttools-devel \
             rust cargo glslc libcurl-devel openssl-devel libsecret-devel zlib-devel systemd-devel libxkbcommon-devel \
             curl tar xz zstd python3 findutils cpio
 
@@ -307,7 +307,7 @@ jobs:
           set -eux
           # git for fetching miniz.
           pacman -Syu --noconfirm --needed base-devel cmake ninja git \
-              qt6-base openssl libsecret
+              qt6-base qt6-tools openssl libsecret
           cmake -S /work -B /tmp/qtonly -G Ninja -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX=/usr -DSTUD_BUILD_ROSEMARY=OFF -DSTUD_BUILD_TESTS=OFF \
               -DSTUD_VERSION="$STUD_VERSION"
@@ -404,7 +404,7 @@ jobs:
           pacman -Syu --noconfirm --needed \
             base-devel cmake ninja git python curl zstd nasm vulkan-headers \
             rust shaderc sdl3 ffmpeg \
-            qt6-base qt6-wayland breeze wpewebkit bubblewrap xdg-dbus-proxy openssl libsecret \
+            qt6-base qt6-tools qt6-wayland breeze wpewebkit bubblewrap xdg-dbus-proxy openssl libsecret \
             vulkan-icd-loader libglvnd mesa libx11 libxext libxi libxrandr \
             libxcursor libxfixes libxss wayland libxkbcommon libxkbcommon-x11 libdecor \
             systemd-libs pipewire libpulse alsa-lib \
@@ -468,7 +468,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config git curl ca-certificates \
             file dpkg-dev tar xz-utils zstd python3 \
-            qt6-base-dev qt6-base-dev-tools libgles-dev \
+            qt6-base-dev qt6-base-dev-tools qt6-tools-dev qt6-l10n-tools libgles-dev \
             glslc libcurl4-openssl-dev libssl-dev libsecret-1-dev zlib1g-dev libudev-dev libxkbcommon-dev
 
       - uses: actions/checkout@v7

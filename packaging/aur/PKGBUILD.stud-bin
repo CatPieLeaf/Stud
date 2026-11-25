@@ -42,6 +42,7 @@ makedepends=(
   'cmake'
   'ninja'
   'git'
+  'qt6-tools'
 )
 # The source tarball is only for building the launcher.
 source=("$pkgname-$pkgver.tar.zst::$url/releases/download/$pkgver/stud-$pkgver-$CARCH.tar.zst"
