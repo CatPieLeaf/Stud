@@ -72,6 +72,7 @@ target_compile_definitions(stud_ui_mac_client PRIVATE STUD_VERSION="${STUD_VERSI
 
 add_executable(stud-ui
     src/main.cpp
+    src/translations.cpp
     src/desktop_entry.cpp
     src/diagnose.cpp
     src/discord_rpc.cpp
@@ -134,4 +135,14 @@ if(Qt6LinguistTools_FOUND)
         TS_FILES "${CMAKE_CURRENT_SOURCE_DIR}/i18n/stud.ts"
         SOURCES ${stud_ui_source_catalogue}
         OPTIONS -no-obsolete -locations none -source-language en)
+
+    # Every catalogue Weblate adds, compiled in, so no package installs them.
+    file(GLOB stud_ui_catalogues CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/i18n/stud_*.ts")
+    if(stud_ui_catalogues)
+        qt_add_lrelease(stud-ui TS_FILES ${stud_ui_catalogues} QM_FILES_OUTPUT_VARIABLE stud_ui_qm_files)
+        qt_add_resources(stud-ui "catalogues"
+            PREFIX "/i18n"
+            BASE "${CMAKE_CURRENT_BINARY_DIR}"
+            FILES ${stud_ui_qm_files})
+    endif()
 endif()
