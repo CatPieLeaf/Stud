@@ -13,7 +13,7 @@
     </message>
     <message>
         <source>There are no release notes for Stud %1 on GitHub.</source>
-        <translation>На GitHub немає нотаток до випуску Stud%1.</translation>
+        <translation>На GitHub немає нотаток до випуску Stud %1.</translation>
     </message>
     <message>
         <source>By %1</source>
@@ -29,7 +29,7 @@
     </message>
     <message>
         <source>Stud %1 is available</source>
-        <translation>Stud&#xa0;%1&#xa0;доступний</translation>
+        <translation>Stud %1 доступний</translation>
     </message>
     <message>
         <source>Release notes</source>
@@ -37,7 +37,7 @@
     </message>
     <message>
         <source>Roblox&apos;s sign-in and web pages need WPE WebKit, which Fedora doesn&apos;t package. Add the Terra repository and install it, then restart Stud:</source>
-        <translation>Для входу та веб-сторінок Roblox&apos;у потрібен WPE WebKit, який не входить до пакету в Fedora. Додайте репозиторій Terra та встановіть його, а потім перезапустіть Stud:</translation>
+        <translation>Вхід у Roblox і його веб-сторінки потребують WPE WebKit, якого немає в пакунках Fedora. Додайте репозиторій Terra та встановіть його, а потім перезапустіть Stud:</translation>
     </message>
     <message>
         <source>Settings</source>
@@ -107,7 +107,7 @@
     </message>
     <message>
         <source>Sounds (*.ogg)</source>
-        <translation>Звуки&#xa0;(*.ogg)</translation>
+        <translation>Звуки (*.ogg)</translation>
     </message>
     <message>
         <source>Character sounds</source>
@@ -119,7 +119,7 @@
     </message>
     <message>
         <source>Avatar background</source>
-        <translation>Фон персонажа</translation>
+        <translation>Фон аватара</translation>
     </message>
     <message>
         <source>Change</source>
@@ -127,7 +127,7 @@
     </message>
     <message>
         <source>Back to Roblox&apos;s default</source>
-        <translation>Повернення до стандартних налаштувань Roblox</translation>
+        <translation>Повернути до значення Roblox за замовчуванням</translation>
     </message>
     <message>
         <source>Choose file...</source>
@@ -139,7 +139,7 @@
     </message>
     <message>
         <source>Looking for more in other bootstrappers...</source>
-        <translation>Шукаю більше серед інших бутстреперів...</translation>
+        <translation>Шукаємо більше серед інших бутстреперів...</translation>
     </message>
     <message>
         <source>Nothing more from other bootstrappers</source>
@@ -159,7 +159,7 @@
     </message>
     <message>
         <source>These change Roblox Player, and take effect the next time it starts.</source>
-        <translation>Ці зміни в Roblox Player набувають чинності під час наступного запуску.</translation>
+        <translation>Вони змінюють Roblox Player і застосовуються під час його наступного запуску.</translation>
     </message>
     <message>
         <source>Login screen</source>
@@ -171,7 +171,7 @@
     </message>
     <message>
         <source>The login background and logo Roblox had before.</source>
-        <translation>Фон для входу та логотип Roblox, які були раніше.</translation>
+        <translation>Фон входу та логотип, які раніше використовував Roblox.</translation>
     </message>
     <message>
         <source>Import from Bloxstrap, Fishstrap or Froststrap...</source>
@@ -179,7 +179,7 @@
     </message>
     <message>
         <source>Choose that bootstrapper&apos;s folder: its customizations are copied in, and its FastFlags added to the FFlags tab.</source>
-        <translation>Виберіть папку цього бутстрепера: його налаштування копіюються, а його FastFlags додаються до вкладки FFlags.</translation>
+        <translation>Оберіть папку цього бутстрепера: його налаштування копіюються, а його FastFlags додаються до вкладки FFlags.</translation>
     </message>
     <message>
         <source>Open folder</source>
@@ -187,11 +187,11 @@
     </message>
     <message>
         <source>Studio customizations</source>
-        <translation>Налаштування студії</translation>
+        <translation>Кастомізація Studio</translation>
     </message>
     <message>
         <source>Player customizations</source>
-        <translation>Налаштування гравця</translation>
+        <translation>Кастомізація Player</translation>
     </message>
 </context>
 <context>
@@ -226,7 +226,7 @@
     </message>
     <message>
         <source>In the Roblox app</source>
-        <translation>У додатку Roblox</translation>
+        <translation>У застосунку Roblox</translation>
     </message>
     <message>
         <source>In a game</source>
@@ -260,7 +260,7 @@
     </message>
     <message>
         <source>Export Stud&apos;s logs</source>
-        <translation>Експорт журналів Stud</translation>
+        <translation>Експорт логів Stud</translation>
     </message>
     <message>
         <source>Archives (*.tar.gz);;All files (*)</source>
@@ -295,15 +295,15 @@
     </message>
     <message>
         <source>You&apos;re not in the gamemode group, so the CPU stays in power-saving mode and Roblox runs slower. Run &quot;sudo usermod -aG gamemode $USER&quot;, then log out and back in.</source>
-        <translation>Ви не перебуваєте в групі gamemode&apos;ів, тому процесор залишається в режимі енергозбереження, і Roblox працює повільніше. Виконайте команду &quot;sudo usermod -aG gamemode $USER&quot;, потім вийдіть і зайдіть знову.</translation>
+        <translation>Ви не входите до групи gamemode, тому процесор залишається в режимі енергозбереження, і Roblox працює повільніше. Виконайте команду &quot;sudo usermod -aG gamemode $USER&quot;, потім вийдіть із системи й увійдіть знову.</translation>
     </message>
     <message>
         <source>Roblox needs the graphics card at %1, and your account cannot open it. Without it, Roblox only shows an empty window. On a Chromebook, restart Linux: right-click the Terminal app and choose Shut down Linux.</source>
-        <translation>Roblox потребує відеокарти з налаштуванням %1, і ваш аккаунт не може його відкрити. Без неї Roblox показує лише порожнє вікно. На Chromebook перезавантажте Linux: клацніть правою кнопкою миші на програмі Термінал і виберіть &quot;Завершити Linux&quot;.</translation>
+        <translation>Roblox потребує доступу до відеокарти (%1), але ваш аккаунт не може її відкрити. Без цього Roblox показує лише порожнє вікно. На Chromebook перезапустіть Linux: клацніть правою кнопкою миші на застосунку &quot;Термінал&quot; і оберіть &quot;Завершити роботу Linux&quot;.</translation>
     </message>
     <message>
         <source>Roblox needs the graphics card at %1, and your account cannot open it. Without it, Roblox only shows an empty window.</source>
-        <translation>Roblox потребує відеокарти з налаштуванням %1, і ваш обліковий запис не може його відкрити. Без неї Roblox показує лише порожнє вікно.</translation>
+        <translation>Roblox потребує доступу до відеокарти (%1), але ваш аккаунт не може її відкрити. Без цього Roblox показує лише порожнє вікно.</translation>
     </message>
     <message>
         <source>Roblox needs the graphics card at %1, and your account cannot open it: it belongs to the group &quot;%2&quot;, which you are not in. Without it, Roblox only shows an empty window.
@@ -313,13 +313,13 @@ Join the group with
     sudo usermod -aG %2 $USER
 
 then sign out and back in (on a Chromebook, restart Linux: right-click the Terminal app and choose Shut down Linux), and start Stud again.</source>
-        <translation>Roblox потребує відеокарти з налаштуванням %1, і ваш обліковий запис не може його відкрити: воно належить до групи &quot;%2&quot;, до якої ви не входите. Без нього Roblox показує лише порожнє вікно.
+        <translation>Roblox потребує доступу до відеокарти (%1), але ваш аккаунт не може її відкрити: вона належить до групи &quot;%2&quot;, до якої ви не входите. Без цього Roblox показує лише порожнє вікно.
 
-Приєднайтеся до групи за допомогою
+Приєднайтеся до групи командою
 
-sudo usermod -aG %2 $USER
+    sudo usermod -aG %2 $USER
 
-потім вийдіть і знову ввійдіть (на Chromebook перезавантажте Linux: клацніть правою кнопкою миші на програмі Термінал і виберіть &quot;Завершити Linux&quot;) і знову запустіть Stud.</translation>
+потім вийдіть із системи й увійдіть знову (на Chromebook перезапустіть Linux: клацніть правою кнопкою миші на застосунку &quot;Термінал&quot; і оберіть &quot;Завершити роботу Linux&quot;), а тоді знову запустіть Stud.</translation>
     </message>
     <message>
         <source>Roblox needs the graphics card at %1, and your account cannot open it: it belongs to the group &quot;%2&quot;, which you are not in. Without it, Roblox only shows an empty window.
@@ -347,11 +347,11 @@ sudo usermod -aG %2 $USER
     </message>
     <message>
         <source>In the Flatpak it has to come from Flathub as a Vulkan layer extension, when there is one: flatpak install flathub org.freedesktop.Platform.VulkanLayer.%1%2</source>
-        <translation>У Flatpak він має надходити з Flathub як розширення шару Vulkan, якщо таке є: flatpak install flathub org.freedesktop.Platform.VulkanLayer.%1%2</translation>
+        <translation>У Flatpak її потрібно встановлювати з Flathub як розширення шару Vulkan, якщо таке є: flatpak install flathub org.freedesktop.Platform.VulkanLayer.%1%2</translation>
     </message>
     <message>
         <source>Stud&apos;s Flatpak is missing permissions Roblox needs: %1.</source>
-        <translation>У Flatpak&apos;і Stud відсутні дозволи, необхідні Roblox: %1.</translation>
+        <translation>У Flatpak-версії Stud бракує дозволів, необхідних Roblox: %1.</translation>
     </message>
     <message>
         <source>Run this in a terminal, then start Stud again:
@@ -375,7 +375,7 @@ Close the existing window before starting it again.</source>
     </message>
     <message>
         <source>Rosemary, which runs Roblox&apos;s macOS client, was not found. Install it, or set STUD_ROSEMARY to its path.</source>
-        <translation>Rosemary, яка запускає клієнт Roblox для macOS, не знайдено. Встановіть її або вкажіть шлях до неї у STUD_ROSEMARY.</translation>
+        <translation>Не знайдено Rosemary, програму, що запускає клієнт Roblox для macOS. Встановіть її або вкажіть шлях до неї у STUD_ROSEMARY.</translation>
     </message>
     <message>
         <source>NVIDIA&apos;s Vulkan driver is missing</source>
@@ -395,7 +395,7 @@ Close the existing window before starting it again.</source>
     </message>
     <message>
         <source>Roblox crashed the first time it ran with your new customizations, so Stud put back the last set that worked. The new ones are in %1.</source>
-        <translation>Roblox завис під час першого запуску з вашими новими налаштуваннями, тому Стад повернув останній набір, який працював. Нові знаходяться в %1.</translation>
+        <translation>Roblox аварійно завершив роботу під час першого запуску з вашою новою кастомізацією, тому Stud повернув останній набір, який працював. Нову кастомізацію збережено в %1.</translation>
     </message>
     <message>
         <source>Roblox didn&apos;t start: %1</source>
@@ -403,19 +403,19 @@ Close the existing window before starting it again.</source>
     </message>
     <message>
         <source>Oops, Stud has crashed!</source>
-        <translation>Ой, Стад зазнав краху!</translation>
+        <translation>Йойки, у Stud стався збій!</translation>
     </message>
     <message>
         <source>%1 stopped unexpectedly.</source>
-        <translation>%1 несподівано зупинився.</translation>
+        <translation>Роботу %1 несподівано завершено.</translation>
     </message>
     <message>
         <source>%1 stopped unexpectedly.
 
 The log for this session has been written and can be exported.</source>
-        <translation>%1 несподівано зупинено.
+        <translation>Роботу %1 несподівано завершено.
 
-Лог для цього сеансу записано та він може бути експортований.</translation>
+Лог для цього сеансу записано, його можна експортувати.</translation>
     </message>
     <message>
         <source>Export logs</source>
@@ -446,7 +446,7 @@ The log for this session has been written and can be exported.</source>
     <name>stud::ui::SettingsWindow</name>
     <message>
         <source>%1 need a permission the Flatpak doesn&apos;t have. Run this in a terminal, then restart Stud:</source>
-        <translation>%1 потребує дозволу, якого немає у Flatpak. Запустіть це в терміналі, а потім перезапустіть Stud:</translation>
+        <translation>%1 потребує дозволу, якого немає у Flatpak. Виконайте це в терміналі, а потім знову запустіть Stud:</translation>
     </message>
     <message>
         <source>Stud Settings</source>
@@ -466,11 +466,11 @@ The log for this session has been written and can be exported.</source>
     </message>
     <message>
         <source>GameMode</source>
-        <translation>Ігровий режим</translation>
+        <translation>GameMode</translation>
     </message>
     <message>
         <source>Ask Feral GameMode for its performance settings while Roblox runs.</source>
-        <translation>Дізнайтеся у Feral GameMode налаштування продуктивності під час роботи Roblox.</translation>
+        <translation>Просить Feral GameMode застосувати налаштування продуктивності, поки працює Roblox.</translation>
     </message>
     <message>
         <source>Game controllers</source>
@@ -478,7 +478,7 @@ The log for this session has been written and can be exported.</source>
     </message>
     <message>
         <source>Delete logs and caches older than</source>
-        <translation>Видалити логи та кеші, старіші за</translation>
+        <translation>Видаляти логи та кеші, старіші за</translation>
     </message>
     <message>
         <source>Never</source>
@@ -486,7 +486,7 @@ The log for this session has been written and can be exported.</source>
     </message>
     <message>
         <source> days</source>
-        <translation> дні</translation>
+        <translation> дн.</translation>
     </message>
     <message>
         <source>Close Roblox when leaving a game</source>
@@ -494,7 +494,7 @@ The log for this session has been written and can be exported.</source>
     </message>
     <message>
         <source>Notify the server region on join</source>
-        <translation>Повідомити регіон сервера під час приєднання</translation>
+        <translation>Повідомляти про регіон сервера під час приєднання</translation>
     </message>
     <message>
         <source>Names the country of the game server each time you join one.</source>
@@ -514,7 +514,7 @@ The log for this session has been written and can be exported.</source>
     </message>
     <message>
         <source>Linux native title bar</source>
-        <translation>Вбудований рядок заголовка Linux</translation>
+        <translation>Стандартний рядок заголовка Linux</translation>
     </message>
     <message>
         <source>Notifications</source>
@@ -522,7 +522,7 @@ The log for this session has been written and can be exported.</source>
     </message>
     <message>
         <source>In Roblox when it is fullscreen</source>
-        <translation>У Roblox, коли воно у повноекранному режимі</translation>
+        <translation>У Roblox, коли він у повноекранному режимі</translation>
     </message>
     <message>
         <source>Always in Roblox</source>
@@ -534,7 +534,7 @@ The log for this session has been written and can be exported.</source>
     </message>
     <message>
         <source>Where Stud&apos;s notifications show while Roblox or Studio is open. The desktop hides its own over a fullscreen game, so Stud can show a Mac-style one in Roblox instead.</source>
-        <translation>Де відображаються сповіщення Stud, коли відкрито Roblox або Studio. Робочий стіл приховує свої власні коли гра на весь екран, тому Stud може показувати сповіщення в стилі Mac в Roblox.</translation>
+        <translation>Де відображаються сповіщення Stud, поки відкрито Roblox або Studio. Робочий стіл приховує власні сповіщення поверх гри в повноекранному режимі, тому Stud може натомість показувати сповіщення в стилі Mac усередині Roblox.</translation>
     </message>
     <message>
         <source>Display server</source>
@@ -550,7 +550,7 @@ The log for this session has been written and can be exported.</source>
     </message>
     <message>
         <source>Launch Roblox through</source>
-        <translation>Запустити Roblox через</translation>
+        <translation>Запускати Roblox через</translation>
     </message>
     <message>
         <source>gamescope -f --</source>
@@ -558,7 +558,7 @@ The log for this session has been written and can be exported.</source>
     </message>
     <message>
         <source>A command Roblox starts through, such as gamescope or prime-run. Quotes work as in a shell. Empty for none.</source>
-        <translation>Команда, через яку запускається Roblox, наприклад, gamescope або prime-run. Лапки працюють як в shell. Пусто для відсутності.</translation>
+        <translation>Команда, через яку запускається Roblox, наприклад gamescope або prime-run. Лапки працюють так само, як в оболонці. Залиште порожнім, якщо не потрібна.</translation>
     </message>
     <message>
         <source>Environment variables</source>
@@ -566,19 +566,19 @@ The log for this session has been written and can be exported.</source>
     </message>
     <message>
         <source>NAME=value, one a line</source>
-        <translation>НАЗВА=значення, по одному на рядок</translation>
+        <translation>NAME=значення, по одному в рядку</translation>
     </message>
     <message>
         <source>Set for Roblox when it starts, after Stud&apos;s own, so one here wins over Stud&apos;s value for the same name. Lines starting with # are skipped.</source>
-        <translation>Встановлюється для Roblox на момент запуску, після власного позначення Stud, щоб одне з цих позначень перемагало значення Stud з такою ж назвою. Рядки, що починаються з #, пропускаються.</translation>
+        <translation>Задаються для Roblox під час запуску, після власних змінних Stud, тому змінна звідси має пріоритет над значенням Stud із тією самою назвою. Рядки, що починаються з #, пропускаються.</translation>
     </message>
     <message>
         <source>Use jsDelivr mirror instead of GitHub</source>
-        <translation>Використати дзеркало jsDelivr замість GitHub</translation>
+        <translation>Використовувати дзеркало jsDelivr замість GitHub</translation>
     </message>
     <message>
         <source>Update checks and customization downloads go through jsDelivr&apos;s mirror of GitHub first, for networks where GitHub is slow or blocked.</source>
-        <translation>Перевірки оновлень та завантаження налаштувань спочатку проходять через дзеркало GitHub від jsDelivr, особливо в мережах, де GitHub працює повільно або там де він заблокований.</translation>
+        <translation>Перевірка оновлень і завантаження персоналізації спочатку йдуть через дзеркало GitHub від jsDelivr. Це для мереж, де GitHub працює повільно або заблокований.</translation>
     </message>
     <message>
         <source>Graphics</source>
@@ -590,7 +590,7 @@ The log for this session has been written and can be exported.</source>
     </message>
     <message>
         <source>No GPUs found</source>
-        <translation>Графічних процесорів (GPU&apos;s) не знайдено</translation>
+        <translation>Графічних процесорів (GPU) не знайдено</translation>
     </message>
     <message>
         <source>Renderer</source>
@@ -612,7 +612,7 @@ OpenGL: Рендерер OpenGL від Roblox, для обладнання, на
     </message>
     <message>
         <source>Presentation</source>
-        <translation>Презентація</translation>
+        <translation>Виведення кадрів</translation>
     </message>
     <message>
         <source>VSync</source>
@@ -635,10 +635,10 @@ OpenGL: Рендерер OpenGL від Roblox, для обладнання, на
 Adaptive VSync: waits, unless a frame is already late; then it tears instead of halving the frame rate.
 No VSync, no tearing: uncapped, and the newest frame is shown at each refresh. On OpenGL, the same as No VSync.
 No VSync: uncapped, and frames are shown at once, so they may tear. The lowest latency.</source>
-        <translation>VSync: кожен кадр очікує оновлення дисплея. Плавний режим, і частота кадрів відповідає частоті відображення.
-Adaptive VSync: очікує, якщо кадр вже не запізнюється; тоді відбувається розрив зображення замість того, щоб зменшувати частоту кадрів вдвічі.
-No VSync, немає розривів: без обмежень, і найновіший кадр відображається при кожному оновленні. В OpenGL те саме, що й No VSync.
-No VSync: без обмежень, і кадри відображаються одночасно, тому вони можуть розриватися. Найнижча затримка.</translation>
+        <translation>VSync: кожен кадр чекає на оновлення дисплея. Плавно, а частота кадрів відповідає частоті дисплея.
+Адаптивний VSync: чекає, якщо кадр ще не запізнився; інакше з’являється розрив зображення замість того, щоб частота кадрів зменшилася вдвічі.
+Без VSync, без розривів зображення: без обмеження частоти кадрів, на кожному оновленні показується найновіший кадр. В OpenGL те саме, що &quot;Без VSync&quot;
+Без VSync: без обмеження частоти, кадри показуються негайно, тому можливі розриви зображення. Найменша затримка.</translation>
     </message>
     <message>
         <source>Render resolution</source>
@@ -678,11 +678,11 @@ SGSR1 ED: легкий варіант. Відновлює контури лиш�
         <source>Frames per second while Roblox is not the window you are using: minimised,
 on another workspace, covered, or alt-tabbed away. All the way right is Unlimited.</source>
         <translation>Кадрів за секунду, поки вікно Roblox неактивне: 
-воно згорнуте, на іншому робочому просторі, перекрите іншими вікнами або ви перемкнулися з нього через Alt+Tab. Крайнє праве положення означає &quot;Без обмежень&quot;.</translation>
+воно згорнуте, на іншому робочому просторі, перекрите іншими вікнами або ви перемкнулися з нього через Alt+Tab. Крайнє праве положення означає &quot;Необмежена&quot;.</translation>
     </message>
     <message>
         <source>MangoHud overlay</source>
-        <translation>MangoHud оверлей</translation>
+        <translation>Оверлей MangoHud</translation>
     </message>
     <message>
         <source>Shows MangoHud&apos;s performance overlay over Roblox.</source>
@@ -726,19 +726,19 @@ on another workspace, covered, or alt-tabbed away. All the way right is Unlimite
     </message>
     <message>
         <source>FFlag editor</source>
-        <translation>Редактор FFlag&apos;ів</translation>
+        <translation>Редактор FFlags</translation>
     </message>
     <message>
         <source>Studio</source>
-        <translation>Студіо</translation>
+        <translation>Studio</translation>
     </message>
     <message>
         <source>Debug</source>
-        <translation>Дебаг</translation>
+        <translation>Налагодження</translation>
     </message>
     <message>
         <source>About</source>
-        <translation>Про</translation>
+        <translation>Про програму</translation>
     </message>
     <message>
         <source>&lt;div style=&apos;text-align:center&apos;&gt;&lt;p&gt;&lt;b&gt;Version %1&lt;/b&gt;&lt;/p&gt;&lt;p&gt;Runs Roblox&apos;s real, unmodified macOS client&lt;br&gt;on Linux.&lt;/p&gt;&lt;/div&gt;</source>
@@ -754,7 +754,7 @@ on another workspace, covered, or alt-tabbed away. All the way right is Unlimite
     </message>
     <message>
         <source>Reset to default. Save to keep it.</source>
-        <translation>Скинути до замовчування. Збережіть, щоб зберегти.</translation>
+        <translation>Скинути до значення за замовчуванням. Збережіть, щоб зберегти зміну.</translation>
     </message>
     <message>
         <source>%1 (at character %2)</source>
@@ -782,7 +782,7 @@ on another workspace, covered, or alt-tabbed away. All the way right is Unlimite
     </message>
     <message>
         <source>Fix the flags first: %1</source>
-        <translation>Спочатку виправте flag&apos;иі: %1</translation>
+        <translation>Спочатку виправте FFlags: %1</translation>
     </message>
     <message>
         <source>Load</source>
@@ -818,7 +818,7 @@ on another workspace, covered, or alt-tabbed away. All the way right is Unlimite
     </message>
     <message>
         <source>Add the flags of a JSON file to these; a flag both have takes the imported value.</source>
-        <translation>Додайте до них flag&apos;и з JSON-файлу; якщо flag є в обох, він набуває імпортованого значення.</translation>
+        <translation>Додати до цих FFlags ті, що є у файлі JSON; якщо FFlag є в обох, береться імпортоване значення.</translation>
     </message>
     <message>
         <source>Clean list</source>
@@ -826,7 +826,7 @@ on another workspace, covered, or alt-tabbed away. All the way right is Unlimite
     </message>
     <message>
         <source>Remove the flags Roblox ignores: those not on its allowlist.</source>
-        <translation>Видалити flag&apos;и, які Roblox ігнорує: ті, яких немає в його списку дозволених.</translation>
+        <translation>Видалити FFlags, які Roblox ігнорує: ті, яких немає в його списку дозволених.</translation>
     </message>
     <message>
         <source>Not valid JSON: %1</source>
@@ -834,7 +834,7 @@ on another workspace, covered, or alt-tabbed away. All the way right is Unlimite
     </message>
     <message>
         <source>Roblox ignores flags not on its allowlist: %1</source>
-        <translation>Roblox ігнорує flag&apos;и, яких немає в його списку дозволених: %1</translation>
+        <translation>Roblox ігнорує FFlags, яких немає в його списку дозволених: %1</translation>
     </message>
     <message>
         <source>The settings from Roblox&apos;s in-game menu. Close Roblox before changing them, or it will overwrite them when it exits.</source>
@@ -870,7 +870,7 @@ on another workspace, covered, or alt-tabbed away. All the way right is Unlimite
     </message>
     <message>
         <source>&lt;b&gt;FastFlags&lt;/b&gt;</source>
-        <translation>&lt;b&gt;FastFlag&apos;и&lt;/b&gt;</translation>
+        <translation>&lt;b&gt;FastFlags&lt;/b&gt;</translation>
     </message>
     <message>
         <source>Studio&apos;s own, separate from the Player&apos;s: a JSON object, written into Studio&apos;s ClientAppSettings.json each time it starts.</source>
@@ -886,7 +886,7 @@ on another workspace, covered, or alt-tabbed away. All the way right is Unlimite
     </message>
     <message>
         <source>Save Studio&apos;s flags</source>
-        <translation>Зберегти flag&apos;и Studio</translation>
+        <translation>Зберегти FFlags Studio</translation>
     </message>
     <message>
         <source>Not saved: %1.</source>
@@ -902,577 +902,580 @@ on another workspace, covered, or alt-tabbed away. All the way right is Unlimite
     </message>
     <message>
         <source>&lt;b&gt;Folders&lt;/b&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;b&gt;Теки&lt;/b&gt;</translation>
     </message>
     <message>
         <source>Open the Plugins folder</source>
-        <translation type="unfinished"></translation>
+        <translation>Відкрити теку &quot;Plugins&quot;</translation>
     </message>
     <message>
         <source>Where Studio loads local plugins from, such as Rojo&apos;s: Documents/Roblox/Plugins inside Stud&apos;s macOS environment.</source>
-        <translation type="unfinished"></translation>
+        <translation>Звідки Studio завантажує локальні плагіни, наприклад Rojo: Documents/Roblox/Plugins у macOS-середовищі Stud.</translation>
     </message>
     <message>
         <source>Open Documents</source>
-        <translation type="unfinished"></translation>
+        <translation>Відкрити Documents</translation>
     </message>
     <message>
         <source>Studio&apos;s Documents folder inside Stud&apos;s macOS environment.</source>
-        <translation type="unfinished"></translation>
+        <translation>Тека Documents Studio у macOS-середовищі Stud.</translation>
     </message>
     <message>
         <source>Start Roblox or Studio once first: the folder is made then.</source>
-        <translation type="unfinished"></translation>
+        <translation>Спершу запустіть Roblox або Studio: тека створюється тоді.</translation>
     </message>
     <message>
         <source>&lt;b&gt;Logs&lt;/b&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;b&gt;Логи&lt;/b&gt;</translation>
     </message>
     <message>
         <source>For a bug report: every session&apos;s log and Roblox&apos;s own, or only the newest session&apos;s.</source>
-        <translation type="unfinished"></translation>
+        <translation>Для звіту про помилку: логи кожного сеансу та власний лог Roblox або лише лог останнього сеансу.</translation>
     </message>
     <message>
         <source>Export logs</source>
-        <translation type="unfinished"></translation>
+        <translation>Експортувати Логи</translation>
     </message>
     <message>
         <source>Every session log, and Roblox&apos;s own logs from the same days, as one .tar.gz.</source>
-        <translation type="unfinished"></translation>
+        <translation>Кожен лог сеансу та власні логи Roblox за ті самі дні, одним архівом .tar.gz.</translation>
     </message>
     <message>
         <source>Export the latest log</source>
-        <translation type="unfinished"></translation>
+        <translation>Експортувати останній лог</translation>
     </message>
     <message>
         <source>Only the newest session&apos;s log, as a .log file.</source>
-        <translation type="unfinished"></translation>
+        <translation>Лише лог останнього сеансу, у файлі .log.</translation>
     </message>
     <message>
         <source>Open the logs folder</source>
-        <translation type="unfinished"></translation>
+        <translation>Відкрити теку логів</translation>
     </message>
     <message>
         <source>Copy system info</source>
-        <translation type="unfinished"></translation>
+        <translation>Скопіювати відомості про систему</translation>
     </message>
     <message>
         <source>Stud&apos;s and Rosemary&apos;s versions, the system, GPU and settings: the top of every session log, ready to paste into a report. Nothing secret is in it.</source>
-        <translation type="unfinished"></translation>
+        <translation>Версії Stud і Rosemary, система, GPU та налаштування: той самий блок, що на початку кожного логу сеансу, готовий для вставлення у звіт. Нічого секретного в ньому немає.</translation>
     </message>
     <message>
         <source>&lt;b&gt;Storage&lt;/b&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;b&gt;Сховище&lt;/b&gt;</translation>
     </message>
     <message>
         <source>Settings, FastFlags, customizations and logs will not be erased.</source>
-        <translation type="unfinished"></translation>
+        <translation>Налаштування, FastFlags, персоналізація та логи не буде видалено.</translation>
     </message>
     <message>
         <source>The web pages&apos; cache. Nothing in it is needed; it fills up again as pages load.</source>
-        <translation type="unfinished"></translation>
+        <translation>Кеш вебсторінок. Нічого з нього не потрібно зберігати: він заповнюється наново під час завантаження сторінок.</translation>
     </message>
     <message>
         <source>The Roblox client and Studio, the macOS environment, your Roblox login and your game history. The next launch downloads and sets up everything again.</source>
-        <translation type="unfinished"></translation>
+        <translation>Клієнт Roblox і Studio, середовище macOS, ваша сесія Roblox та історія ваших ігор. Під час наступного запуску все буде завантажено й налаштовано знову.</translation>
     </message>
     <message>
         <source>Repair Roblox</source>
-        <translation type="unfinished"></translation>
+        <translation>Відновити Roblox</translation>
     </message>
     <message>
         <source>Removes the installed Roblox and Studio, so the next launch downloads them fresh. Your Roblox login and the macOS environment stay.</source>
-        <translation type="unfinished"></translation>
+        <translation>Видаляє встановлені Roblox і Studio, тож під час наступного запуску їх буде завантажено наново. Ваша сесія Roblox і середовище macOS залишаються.</translation>
     </message>
     <message>
         <source>Reset the macOS environment</source>
-        <translation type="unfinished"></translation>
+        <translation>Скинути середовище macOS</translation>
     </message>
     <message>
         <source>Removes the macOS environment Roblox runs in, which the next launch sets up again. Roblox itself stays; your Roblox login and Roblox&apos;s own settings go.</source>
-        <translation type="unfinished"></translation>
+        <translation>Видаляє середовище macOS, у якому працює Roblox, і під час наступного запуску налаштовує його знову. Сам Roblox залишається; ваша сесія Roblox і власні налаштування Roblox буде видалено.</translation>
     </message>
     <message>
         <source>Open the data folder</source>
-        <translation type="unfinished"></translation>
+        <translation>Відкрити теку даних</translation>
     </message>
     <message>
         <source>&lt;b&gt;Settings&lt;/b&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;b&gt;Налаштування&lt;/b&gt;</translation>
     </message>
     <message>
         <source>Reset all settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Скинути всі налаштування</translation>
     </message>
     <message>
         <source>Every setting here back to its default, as right-clicking each one does. Nothing changes until you save.</source>
-        <translation type="unfinished"></translation>
+        <translation>Усі налаштування тут повертаються до значень за замовчуванням, так само як і після клацання правою кнопкою миші по кожному з них. Нічого не зміниться, доки ви не збережете.</translation>
     </message>
     <message>
         <source>Clear Stud&apos;s cache</source>
-        <translation type="unfinished"></translation>
+        <translation>Очистити кеш Stud</translation>
     </message>
     <message>
         <source>Clear Stud&apos;s data</source>
-        <translation type="unfinished"></translation>
+        <translation>Очистити дані Stud</translation>
     </message>
     <message>
         <source>Clear Stud&apos;s cache (%1)</source>
-        <translation type="unfinished"></translation>
+        <translation>Очистити кеш Stud (%1)</translation>
     </message>
     <message>
         <source>Clear Stud&apos;s data (%1)</source>
-        <translation type="unfinished"></translation>
+        <translation>Очистити дані Stud (%1)</translation>
     </message>
     <message>
         <source>System info copied.</source>
-        <translation type="unfinished"></translation>
+        <translation>Відомості про систему скопійовано.</translation>
     </message>
     <message>
         <source>Every setting is back to its default. Save to keep them.</source>
-        <translation type="unfinished"></translation>
+        <translation>Усі налаштування повернуто до значень за замовчуванням. Збережіть, щоб зберегти зміни.</translation>
     </message>
     <message>
         <source>Close Roblox first: Stud is using these files while it runs.</source>
-        <translation type="unfinished"></translation>
+        <translation>Спершу закрийте Roblox: Stud використовує ці файли, поки він працює.</translation>
     </message>
     <message>
         <source>Stud&apos;s cache is cleared.</source>
-        <translation type="unfinished"></translation>
+        <translation>Кеш Stud очищено.</translation>
     </message>
     <message>
         <source>Some of Stud&apos;s cache could not be removed.</source>
-        <translation type="unfinished"></translation>
+        <translation>Не вдалося видалити частину кешу Stud.</translation>
     </message>
     <message>
         <source>Remove the Roblox client and Studio, the macOS environment, your Roblox login and your game history?
 
 The next launch downloads and sets up everything again, and you sign in to Roblox again. Settings, FastFlags, customizations and logs are kept.</source>
-        <translation type="unfinished"></translation>
+        <translation>Видалити клієнт Roblox і Studio, середовище macOS, вашу сесію Roblox та історію ваших ігор?
+
+Під час наступного запуску все буде завантажено й налаштовано знову, а вам доведеться знову увійти в Roblox. Налаштування, FastFlags, персоналізація та логи залишаються.</translation>
     </message>
     <message>
         <source>Stud&apos;s data is cleared.</source>
-        <translation type="unfinished"></translation>
+        <translation>Дані Stud очищено.</translation>
     </message>
     <message>
         <source>Some of Stud&apos;s data could not be removed.</source>
-        <translation type="unfinished"></translation>
+        <translation>Не вдалося видалити частину даних Stud.</translation>
     </message>
     <message>
         <source>Remove the installed Roblox and Studio? The next launch downloads them again. Your Roblox login stays.</source>
-        <translation type="unfinished"></translation>
+        <translation>Видалити встановлені Roblox і Studio? Під час наступного запуску їх буде завантажено знову. Ваша сесія Roblox залишається.</translation>
     </message>
     <message>
         <source>Roblox will be downloaded again at the next launch.</source>
-        <translation type="unfinished"></translation>
+        <translation>Roblox буде завантажено знову під час наступного запуску.</translation>
     </message>
     <message>
         <source>Some of Roblox could not be removed.</source>
-        <translation type="unfinished"></translation>
+        <translation>Не вдалося видалити частину Roblox.</translation>
     </message>
     <message>
         <source>Remove the macOS environment Roblox runs in? The next launch sets it up again. You sign in to Roblox again, and Roblox&apos;s own settings (volume, sensitivity and the like) go back to its defaults.</source>
-        <translation type="unfinished"></translation>
+        <translation>Видалити середовище macOS, у якому працює Roblox? Під час наступного запуску його буде налаштовано знову. Вам доведеться знову увійти в Roblox, а власні налаштування Roblox (гучність, чутливість тощо) повернуться до значень за замовчуванням.</translation>
     </message>
     <message>
         <source>The macOS environment will be set up again at the next launch.</source>
-        <translation type="unfinished"></translation>
+        <translation>Середовище macOS буде налаштовано знову під час наступного запуску.</translation>
     </message>
     <message>
         <source>Some of the macOS environment could not be removed.</source>
-        <translation type="unfinished"></translation>
+        <translation>Не вдалося видалити частину середовища macOS.</translation>
     </message>
     <message>
         <source>Track games</source>
-        <translation type="unfinished"></translation>
+        <translation>Відстежувати ігри</translation>
     </message>
     <message>
         <source>Keeps each game you play here, with the time played.</source>
-        <translation type="unfinished"></translation>
+        <translation>Зберігає тут кожну гру, у яку ви граєте, разом із часом гри.</translation>
     </message>
     <message>
         <source>Track servers</source>
-        <translation type="unfinished"></translation>
+        <translation>Відстежувати сервери</translation>
     </message>
     <message>
         <source>Keeps each server you join in a game, with where it is, so you can rejoin it.
 Finding where a server is asks ipwho.is about the server&apos;s address, never yours.</source>
-        <translation type="unfinished"></translation>
+        <translation>Зберігає кожен сервер, до якого ви приєднуєтеся в грі, разом із його розташуванням, щоб ви могли знову до нього приєднатися.
+Щоб визначити розташування сервера, надсилається запит до ipwho.is щодо адреси сервера, (не вашої).</translation>
     </message>
     <message>
         <source>Place %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Місце %1</translation>
     </message>
     <message>
         <source>Server %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Сервер %1</translation>
     </message>
     <message>
         <source>Time played in all: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Загальний час гри: %1</translation>
     </message>
     <message>
         <source>Join</source>
-        <translation type="unfinished"></translation>
+        <translation>Приєднатися</translation>
     </message>
     <message>
         <source>Create shortcut</source>
-        <translation type="unfinished"></translation>
+        <translation>Створити ярлик</translation>
     </message>
     <message>
         <source>Adds the game to the application menu; it opens straight into the game.</source>
-        <translation type="unfinished"></translation>
+        <translation>Додає гру до меню застосунків. Ярлик одразу запускає саме цю гру.</translation>
     </message>
     <message>
         <source>Refresh</source>
-        <translation type="unfinished"></translation>
+        <translation>Оновити</translation>
     </message>
     <message>
         <source>Clear history</source>
-        <translation type="unfinished"></translation>
+        <translation>Очистити історію</translation>
     </message>
     <message>
         <source>Forgets every game and server here, and the time played.</source>
-        <translation type="unfinished"></translation>
+        <translation>Видаляє всі збережені ігри та сервери разом із часом гри.</translation>
     </message>
     <message>
         <source>Forget every game and server, and the time played?</source>
-        <translation type="unfinished"></translation>
+        <translation>Видалити всі ігри та сервери разом із часом гри?</translation>
     </message>
     <message>
         <source>Rejoin server</source>
-        <translation type="unfinished"></translation>
+        <translation>Повторно приєднатися до сервера</translation>
     </message>
     <message>
         <source>Added %1 to the application menu.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 додано до меню застосунків.</translation>
     </message>
     <message>
         <source>Could not add the shortcut: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Не вдалося додати ярлик: %1</translation>
     </message>
     <message>
         <source>Could not write %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>Не вдалося записати %1.</translation>
     </message>
     <message>
         <source>Choose the Bloxstrap, Fishstrap or Froststrap folder</source>
-        <translation type="unfinished"></translation>
+        <translation>Виберіть теку Bloxstrap, Fishstrap або Froststrap</translation>
     </message>
     <message>
         <source>That folder has no Modifications folder.</source>
-        <translation type="unfinished"></translation>
+        <translation>У цій теці немає теки Modifications.</translation>
     </message>
     <message>
         <source>Imported %1 customization file(s) and %2 flag(s). Save to keep the flags.</source>
-        <translation type="unfinished"></translation>
+        <translation>Імпортовано файлів кастомізації: %1, FFlags: %2. Збережіть, щоб зберегти FFlags.</translation>
     </message>
     <message>
         <source>Import FFlags</source>
-        <translation type="unfinished"></translation>
+        <translation>Імпортувати FFlags</translation>
     </message>
     <message>
         <source>JSON files (*.json);;All files (*)</source>
-        <translation type="unfinished"></translation>
+        <translation>Файли JSON (*.json);;Усі файли (*)</translation>
     </message>
     <message>
         <source>Could not read %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>Не вдалося прочитати %1.</translation>
     </message>
     <message>
         <source>%1 is not usable: %2</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 непридатний до використання: %2</translation>
     </message>
     <message>
         <source>Fix the flags above before importing: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Спочатку виправте FFlags вище, а потім імпортуйте: %1</translation>
     </message>
     <message>
         <source>Imported %1 flag(s). Save to keep them.</source>
-        <translation type="unfinished"></translation>
+        <translation>Імпортовано FFlags: %1. Збережіть, щоб зберегти їх.</translation>
     </message>
     <message>
         <source>Failed to load settings: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Не вдалося завантажити налаштування: %1</translation>
     </message>
     <message>
         <source>Your Stud version is outdated!</source>
-        <translation type="unfinished"></translation>
+        <translation>Ваша версія Stud застаріла!</translation>
     </message>
     <message>
         <source>Restart</source>
-        <translation type="unfinished"></translation>
+        <translation>Перезапустити</translation>
     </message>
     <message>
         <source>Settings saved.</source>
-        <translation type="unfinished"></translation>
+        <translation>Налаштування збережено.</translation>
     </message>
     <message>
         <source>Restarting Stud...</source>
-        <translation type="unfinished"></translation>
+        <translation>Перезапускаємо Stud…</translation>
     </message>
     <message>
         <source>Nothing was saved. The FFlags are not valid JSON: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Нічого не збережено. FFlags не є коректним JSON: %1</translation>
     </message>
     <message>
         <source>Nothing was saved. Fix or delete the settings file first: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Нічого не збережено. Спочатку виправте або видаліть файл налаштувань: %1</translation>
     </message>
     <message>
         <source>Failed to save settings: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Не вдалося зберегти налаштування: %1</translation>
     </message>
 </context>
 <context>
     <name>stud::ui::Tray</name>
     <message>
         <source>Stud settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Налаштування Stud</translation>
     </message>
     <message>
         <source>Copy server link</source>
-        <translation type="unfinished"></translation>
+        <translation>Скопіювати посилання на сервер</translation>
     </message>
     <message>
         <source>Export logs</source>
-        <translation type="unfinished"></translation>
+        <translation>Експортувати логи</translation>
     </message>
     <message>
         <source>About Stud</source>
-        <translation type="unfinished"></translation>
+        <translation>Про Stud</translation>
     </message>
     <message>
         <source>Exit Stud</source>
-        <translation type="unfinished"></translation>
+        <translation>Вийти зі Stud</translation>
     </message>
     <message>
         <source>⚠️ Update Stud</source>
-        <translation type="unfinished"></translation>
+        <translation>⚠️ Оновити Stud</translation>
     </message>
     <message>
         <source>Stud: version %1 is available</source>
-        <translation type="unfinished"></translation>
+        <translation>Stud: доступна версія %1</translation>
     </message>
     <message>
         <source>Could not copy: this desktop needs wl-clipboard installed.</source>
-        <translation type="unfinished"></translation>
+        <translation>Не вдалося скопіювати: на цьому робочому столі потрібно встановити wl-clipboard.</translation>
     </message>
     <message>
         <source>Server link copied.</source>
-        <translation type="unfinished"></translation>
+        <translation>Посилання на сервер скопійовано.</translation>
     </message>
     <message>
         <source>Runs Roblox&apos;s real, unmodified macOS client on Linux.</source>
-        <translation type="unfinished"></translation>
+        <translation>Запускає справжній, незмінений клієнт Roblox для macOS у Linux.</translation>
     </message>
     <message>
         <source>Version %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Версія %1</translation>
     </message>
     <message>
         <source>By %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Автор: %1</translation>
     </message>
 </context>
 <context>
     <name>stud::ui::UpdateCheck</name>
     <message>
         <source>Stud could not update</source>
-        <translation type="unfinished"></translation>
+        <translation>Не вдалося оновити Stud</translation>
     </message>
     <message>
         <source>The release&apos;s checksum could not be read.</source>
-        <translation type="unfinished"></translation>
+        <translation>Не вдалося прочитати контрольну суму випуску.</translation>
     </message>
     <message>
         <source>%1 is not writable.</source>
-        <translation type="unfinished"></translation>
+        <translation>Немає доступу на запис до %1.</translation>
     </message>
     <message>
         <source>Updating Stud</source>
-        <translation type="unfinished"></translation>
+        <translation>Оновлюємо Stud</translation>
     </message>
     <message>
         <source>Downloading Stud %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>Завантажуємо Stud %1.</translation>
     </message>
     <message>
         <source>The download did not match the release.</source>
-        <translation type="unfinished"></translation>
+        <translation>Завантажений файл не збігається з випуском.</translation>
     </message>
     <message>
         <source>The download did not finish.</source>
-        <translation type="unfinished"></translation>
+        <translation>Завантаження не завершилося.</translation>
     </message>
     <message>
         <source>The new AppImage could not replace %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>Новий AppImage не вдалося встановити замість %1.</translation>
     </message>
     <message>
         <source>Stud updated</source>
-        <translation type="unfinished"></translation>
+        <translation>Stud оновлено</translation>
     </message>
     <message>
         <source>Restart Stud to use version %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>Перезапустіть Stud, щоб використовувати версію %1.</translation>
     </message>
 </context>
 <context>
     <name>stud::ui::client</name>
     <message>
         <source>the download is not a readable zip</source>
-        <translation type="unfinished"></translation>
+        <translation>Завантажений файл не є придатним для читання ZIP-архівом</translation>
     </message>
     <message>
         <source>cancelled</source>
-        <translation type="unfinished"></translation>
+        <translation>скасовано</translation>
     </message>
     <message>
         <source>the download names a path outside its folder</source>
-        <translation type="unfinished"></translation>
+        <translation>завантажений архів містить шлях за межами своєї теки</translation>
     </message>
     <message>
         <source>the download links to a path outside its folder</source>
-        <translation type="unfinished"></translation>
+        <translation>завантажений архів містить посилання на шлях за межами своєї теки</translation>
     </message>
     <message>
         <source>the download could not be unpacked</source>
-        <translation type="unfinished"></translation>
+        <translation>завантажений архів не вдалося розпакувати</translation>
     </message>
     <message>
         <source>Checking for %1 updates</source>
-        <translation type="unfinished"></translation>
+        <translation>Перевірка оновлень %1</translation>
     </message>
     <message>
         <source>Cancelled.</source>
-        <translation type="unfinished"></translation>
+        <translation>Скасовано.</translation>
     </message>
     <message>
         <source>%1 was changed since it was installed, and Roblox could not be reached to download it again.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 було змінено після встановлення, а зв’язатися з Roblox для повторного завантаження не вдалося.</translation>
     </message>
     <message>
         <source>Could not reach Roblox to download %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>Не вдалося зв’язатися з Roblox, щоб завантажити %1.</translation>
     </message>
     <message>
         <source>Updating %1 to %2</source>
-        <translation type="unfinished"></translation>
+        <translation>Оновлюємо %1 до %2</translation>
     </message>
     <message>
         <source>Downloading %1 %2</source>
-        <translation type="unfinished"></translation>
+        <translation>Завантажуємо %1 %2</translation>
     </message>
     <message>
         <source>Could not download %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>Не вдалося завантажити %1.</translation>
     </message>
     <message>
         <source>Unpacking %1 %2</source>
-        <translation type="unfinished"></translation>
+        <translation>Розпакувуємо %1 %2</translation>
     </message>
     <message>
         <source>Could not unpack %1: %2</source>
-        <translation type="unfinished"></translation>
+        <translation>Не вдалося розпакувати %1: %2</translation>
     </message>
     <message>
         <source>unexpected layout</source>
-        <translation type="unfinished"></translation>
+        <translation>неочікувана структура</translation>
     </message>
     <message>
         <source>Could not record the installed %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>Не вдалося зберегти відомості про встановлений %1.</translation>
     </message>
     <message>
         <source>Setting up the macOS environment</source>
-        <translation type="unfinished"></translation>
+        <translation>Налаштовуємо середовище macOS</translation>
     </message>
     <message>
         <source>Could not set up the macOS environment (rosemary prefix create failed; the log has its output).</source>
-        <translation type="unfinished"></translation>
+        <translation>Не вдалося налаштувати середовище macOS (rosemary prefix create завершилася помилкою; лог є в журналі).</translation>
     </message>
     <message>
         <source>Could not write ClientAppSettings.json.</source>
-        <translation type="unfinished"></translation>
+        <translation>Не вдалося записати ClientAppSettings.json.</translation>
     </message>
 </context>
 <context>
     <name>stud::ui::codesign</name>
     <message>
         <source>Apple&apos;s root did not load</source>
-        <translation type="unfinished"></translation>
+        <translation>Корінь Apple не завантажився</translation>
     </message>
     <message>
         <source>Info.plist was changed</source>
-        <translation type="unfinished"></translation>
+        <translation>Info.plist було змінено</translation>
     </message>
     <message>
         <source>its seal was changed</source>
-        <translation type="unfinished"></translation>
+        <translation>його печатку було змінено</translation>
     </message>
     <message>
         <source>its seal cannot be read</source>
-        <translation type="unfinished"></translation>
+        <translation>його печатку неможливо прочитати</translation>
     </message>
 </context>
 <context>
     <name>stud::ui::customization</name>
     <message>
         <source>could not apply the customization file %1</source>
-        <translation type="unfinished"></translation>
+        <translation>не вдалося застосувати файл кастомізації %1</translation>
     </message>
     <message>
         <source>could not point %1 at the custom font</source>
-        <translation type="unfinished"></translation>
+        <translation>не вдалося вказати %1 на власний шрифт</translation>
     </message>
     <message>
         <source>could not record the applied customizations</source>
-        <translation type="unfinished"></translation>
+        <translation>не вдалося зберегти відомості про застосовану кастомізацію</translation>
     </message>
     <message>
         <source>could not copy %1 into the customizations folder</source>
-        <translation type="unfinished"></translation>
+        <translation>не вдалося скопіювати %1 до теки кастомізації</translation>
     </message>
     <message>
         <source>Roblox is not installed yet; open it once first.</source>
-        <translation type="unfinished"></translation>
+        <translation>Roblox ще не встановлено; спершу запустіть його один раз.</translation>
     </message>
     <message>
         <source>could not write %1</source>
-        <translation type="unfinished"></translation>
+        <translation>не вдалося записати %1</translation>
     </message>
     <message>
         <source>Roblox&apos;s default</source>
-        <translation type="unfinished"></translation>
+        <translation>За замовчуванням у Roblox</translation>
     </message>
     <message>
         <source>Recoloured</source>
-        <translation type="unfinished"></translation>
+        <translation>Перефарбовано</translation>
     </message>
     <message>
         <source>%1&apos;s %2</source>
-        <translation type="unfinished"></translation>
+        <translation>%1: %2</translation>
     </message>
     <message>
         <source>Bloxstrap&apos;s classic</source>
-        <translation type="unfinished"></translation>
+        <translation>Класичний варіант Bloxstrap</translation>
     </message>
     <message>
         <source>Bloxstrap&apos;s %1</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 від Bloxstrap</translation>
     </message>
     <message>
         <source>Custom files</source>
-        <translation type="unfinished"></translation>
+        <translation>Власні файли</translation>
     </message>
     <message>
         <source>could not keep the download</source>
-        <translation type="unfinished"></translation>
+        <translation>не вдалося зберегти завантажений файл</translation>
     </message>
     <message>
         <source>Froststrap no longer offers it</source>
-        <translation type="unfinished"></translation>
+        <translation>Froststrap більше цього не пропонує</translation>
     </message>
 </context>
 </TS>
